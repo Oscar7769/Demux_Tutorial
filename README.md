@@ -29,7 +29,7 @@
 <p>
   <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
   <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
-  <img src="https://img.shields.io/badge/Design-8%C3%978%20Binary%20Grid-orange" alt="8x8 binary grid">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
   <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
   <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
   <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
@@ -41,7 +41,7 @@
 
 模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
 
-本 Repository 建立一個以 **8 × 8 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
 
 在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
 
@@ -78,7 +78,7 @@
 
 ```mermaid
 flowchart TD
-    A["產生初始 8 × 8 二元結構"] --> B["端口限制與幾何投影"]
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
     B --> C["Meep FDTD 模態模擬"]
     C --> D["計算模態傳輸率與 FoM"]
     D --> E["建立模擬資料集"]
@@ -92,9 +92,103 @@ flowchart TD
 
 ### 2. 二元結構編碼與幾何投影
 
-設計變數為 $`8\times8`$ 二元矩陣，展平成 64 維向量：
+設計變數為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+10\times10`$ 二元矩陣，展平成 100 維向量：
 ```math
-\mathbf{x}\in\{0,1\}^{64}.
+\mathbf{x}\in\{0,1\}^{100}.
 ```
 程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
 ```math
@@ -171,8 +265,810 @@ E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
 | 參數 | Notebook 設定 | 說明 |
 |---|---:|---|
 | 模擬維度 | 2D | 二維 FDTD |
-| 設計區域 | $`6.5\times6.5\,\mu\mathrm{m}^2`$ | 中央材料設計區 |
-| 模擬區域 | $`9.5\times8.5\,\mu\mathrm{m}^2`$ | $`S_x\times S_y`$ |
+| 設計區域 | <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+設計變數為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+10\times10`$ 二元矩陣，展平成 100 維向量：
+```math
+\mathbf{x}\in\{0,1\}^{100}.
+```
+程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
+```math
+\rho=G_\sigma * X,
+\qquad
+G_\sigma(i,j)\propto
+\exp\left[-\frac{i^2+j^2}{2\sigma^2}\right].
+```
+平滑後的密度透過 Tanh projection 轉換：
+```math
+\tilde{\rho}=
+\frac{
+\tanh(\beta\eta)+\tanh[\beta(\rho-\eta)]
+}{
+\tanh(\beta\eta)+\tanh[\beta(1-\eta)]
+}.
+```
+Notebook 預設採用 $`5\times5`$ Gaussian kernel、$`\sigma=0.5`$、$`\beta=50`$、$`\eta=0.5`$，並將投影密度映射至 Meep <code>MaterialGrid</code>。此參數化方式保留二元搜尋變數，同時透過平滑與投影控制材料邊界。
+
+### 3. FDTD 模擬與模態傳輸
+
+模擬以 Meep <code>EigenModeSource</code> 激發輸入波導中的 TE 模態：
+
+| 模態 | 輸入本徵模態設定 | 目標輸出端口 |
+|---|---|---|
+| TE₀ | band 1、偶對稱（<code>mp.EVEN_Y</code>） | Port 1，$`y=+1.5\,\mu\mathrm{m}`$ |
+| TE₁ | band 2、奇對稱（<code>mp.ODD_Y</code>） | Port 2，$`y=-1.5\,\mu\mathrm{m}`$ |
+
+令 $`T_{ij}`$ 表示輸入模態 $`i`$ 傳輸至輸出端口 $`j`$ 的功率比：
+```math
+T_{ij}=
+\frac{|\alpha_{i\rightarrow j}^{\mathrm{out}}|^2}
+{|\alpha_i^{\mathrm{in}}|^2+\epsilon},
+```
+其中 $`\alpha`$ 為 Meep 模態分解所得的複數模態係數，$`\epsilon`$ 為數值穩定項。目標通道為 $`T_{01}`$ 與 $`T_{12}`$，非目標通道為 $`T_{02}`$ 與 $`T_{11}`$。
+
+### 4. FoM 定義
+
+採用乘積型目標函數：
+```math
+S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
+\qquad
+S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
+```
+```math
+\mathrm{FoM}_{\mathrm{NB}}=
+S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
+```
+目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
+
+### 5. FM 模型與 QUBO 建構
+
+本專案使用 PyTorch 實作二階 Factorization Machine。模型架構、前向傳播、訓練流程，以及由模型參數擷取二次交互作用係數的實作細節，請參考獨立教學 Repository：[Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)。
+
+在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
+
+QUBO 的二元能量形式為：
+```math
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
+```
+取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
+
+### 6. MPI 平行化
+
+程式使用 MPI Master–Worker 架構。Master（rank 0）負責建立資料集、訓練 FM、建構 BQM 及更新最佳解；Worker ranks 負責接收設計向量、執行 Meep 模擬並回傳 FoM。初始樣本與每輪新增候選解的評估工作可因此分配至多個 processes。
+
+## 模擬設定
+
+以下整理本專案 Notebook 與純 Python 腳本共用的預設模擬及最佳化參數。
+
+### 電磁模型參數
+
+| 參數 | Notebook 設定 | 說明 |
+|---|---:|---|
+| 模擬維度 | 2D | 二維 FDTD |
+| 設計區域 | 4.0\times4.0\,\mu\mathrm{m}^2`$ | 中央材料設計區 |
+| 模擬區域 | <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+設計變數為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+10\times10`$ 二元矩陣，展平成 100 維向量：
+```math
+\mathbf{x}\in\{0,1\}^{100}.
+```
+程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
+```math
+\rho=G_\sigma * X,
+\qquad
+G_\sigma(i,j)\propto
+\exp\left[-\frac{i^2+j^2}{2\sigma^2}\right].
+```
+平滑後的密度透過 Tanh projection 轉換：
+```math
+\tilde{\rho}=
+\frac{
+\tanh(\beta\eta)+\tanh[\beta(\rho-\eta)]
+}{
+\tanh(\beta\eta)+\tanh[\beta(1-\eta)]
+}.
+```
+Notebook 預設採用 $`5\times5`$ Gaussian kernel、$`\sigma=0.5`$、$`\beta=50`$、$`\eta=0.5`$，並將投影密度映射至 Meep <code>MaterialGrid</code>。此參數化方式保留二元搜尋變數，同時透過平滑與投影控制材料邊界。
+
+### 3. FDTD 模擬與模態傳輸
+
+模擬以 Meep <code>EigenModeSource</code> 激發輸入波導中的 TE 模態：
+
+| 模態 | 輸入本徵模態設定 | 目標輸出端口 |
+|---|---|---|
+| TE₀ | band 1、偶對稱（<code>mp.EVEN_Y</code>） | Port 1，$`y=+1.5\,\mu\mathrm{m}`$ |
+| TE₁ | band 2、奇對稱（<code>mp.ODD_Y</code>） | Port 2，$`y=-1.5\,\mu\mathrm{m}`$ |
+
+令 $`T_{ij}`$ 表示輸入模態 $`i`$ 傳輸至輸出端口 $`j`$ 的功率比：
+```math
+T_{ij}=
+\frac{|\alpha_{i\rightarrow j}^{\mathrm{out}}|^2}
+{|\alpha_i^{\mathrm{in}}|^2+\epsilon},
+```
+其中 $`\alpha`$ 為 Meep 模態分解所得的複數模態係數，$`\epsilon`$ 為數值穩定項。目標通道為 $`T_{01}`$ 與 $`T_{12}`$，非目標通道為 $`T_{02}`$ 與 $`T_{11}`$。
+
+### 4. FoM 定義
+
+採用乘積型目標函數：
+```math
+S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
+\qquad
+S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
+```
+```math
+\mathrm{FoM}_{\mathrm{NB}}=
+S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
+```
+目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
+
+### 5. FM 模型與 QUBO 建構
+
+本專案使用 PyTorch 實作二階 Factorization Machine。模型架構、前向傳播、訓練流程，以及由模型參數擷取二次交互作用係數的實作細節，請參考獨立教學 Repository：[Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)。
+
+在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
+
+QUBO 的二元能量形式為：
+```math
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
+```
+取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
+
+### 6. MPI 平行化
+
+程式使用 MPI Master–Worker 架構。Master（rank 0）負責建立資料集、訓練 FM、建構 BQM 及更新最佳解；Worker ranks 負責接收設計向量、執行 Meep 模擬並回傳 FoM。初始樣本與每輪新增候選解的評估工作可因此分配至多個 processes。
+
+## 模擬設定
+
+以下整理本專案 Notebook 與純 Python 腳本共用的預設模擬及最佳化參數。
+
+### 電磁模型參數
+
+| 參數 | Notebook 設定 | 說明 |
+|---|---:|---|
+| 模擬維度 | 2D | 二維 FDTD |
+| 設計區域 | <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+設計變數為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+10\times10`$ 二元矩陣，展平成 100 維向量：
+```math
+\mathbf{x}\in\{0,1\}^{100}.
+```
+程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
+```math
+\rho=G_\sigma * X,
+\qquad
+G_\sigma(i,j)\propto
+\exp\left[-\frac{i^2+j^2}{2\sigma^2}\right].
+```
+平滑後的密度透過 Tanh projection 轉換：
+```math
+\tilde{\rho}=
+\frac{
+\tanh(\beta\eta)+\tanh[\beta(\rho-\eta)]
+}{
+\tanh(\beta\eta)+\tanh[\beta(1-\eta)]
+}.
+```
+Notebook 預設採用 $`5\times5`$ Gaussian kernel、$`\sigma=0.5`$、$`\beta=50`$、$`\eta=0.5`$，並將投影密度映射至 Meep <code>MaterialGrid</code>。此參數化方式保留二元搜尋變數，同時透過平滑與投影控制材料邊界。
+
+### 3. FDTD 模擬與模態傳輸
+
+模擬以 Meep <code>EigenModeSource</code> 激發輸入波導中的 TE 模態：
+
+| 模態 | 輸入本徵模態設定 | 目標輸出端口 |
+|---|---|---|
+| TE₀ | band 1、偶對稱（<code>mp.EVEN_Y</code>） | Port 1，$`y=+1.5\,\mu\mathrm{m}`$ |
+| TE₁ | band 2、奇對稱（<code>mp.ODD_Y</code>） | Port 2，$`y=-1.5\,\mu\mathrm{m}`$ |
+
+令 $`T_{ij}`$ 表示輸入模態 $`i`$ 傳輸至輸出端口 $`j`$ 的功率比：
+```math
+T_{ij}=
+\frac{|\alpha_{i\rightarrow j}^{\mathrm{out}}|^2}
+{|\alpha_i^{\mathrm{in}}|^2+\epsilon},
+```
+其中 $`\alpha`$ 為 Meep 模態分解所得的複數模態係數，$`\epsilon`$ 為數值穩定項。目標通道為 $`T_{01}`$ 與 $`T_{12}`$，非目標通道為 $`T_{02}`$ 與 $`T_{11}`$。
+
+### 4. FoM 定義
+
+採用乘積型目標函數：
+```math
+S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
+\qquad
+S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
+```
+```math
+\mathrm{FoM}_{\mathrm{NB}}=
+S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
+```
+目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
+
+### 5. FM 模型與 QUBO 建構
+
+本專案使用 PyTorch 實作二階 Factorization Machine。模型架構、前向傳播、訓練流程，以及由模型參數擷取二次交互作用係數的實作細節，請參考獨立教學 Repository：[Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)。
+
+在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
+
+QUBO 的二元能量形式為：
+```math
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
+```
+取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
+
+### 6. MPI 平行化
+
+程式使用 MPI Master–Worker 架構。Master（rank 0）負責建立資料集、訓練 FM、建構 BQM 及更新最佳解；Worker ranks 負責接收設計向量、執行 Meep 模擬並回傳 FoM。初始樣本與每輪新增候選解的評估工作可因此分配至多個 processes。
+
+## 模擬設定
+
+以下整理本專案 Notebook 與純 Python 腳本共用的預設模擬及最佳化參數。
+
+### 電磁模型參數
+
+| 參數 | Notebook 設定 | 說明 |
+|---|---:|---|
+| 模擬維度 | 2D | 二維 FDTD |
+| 設計區域 | 4.0\times4.0\,\mu\mathrm{m}^2`$ | 中央材料設計區 |
+| 模擬區域 | 7.0\times6.0\,\mu\mathrm{m}^2`$ | $`S_x\times S_y`$ |
 | 輸入波導寬度 | 1.8 µm | 多模態輸入端 |
 | 輸出波導寬度 | 0.5 µm | 兩個單模態輸出端 |
 | 波導延伸長度 | 0.5 µm | 設計區外固定波導 |
@@ -180,14 +1076,14 @@ E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
 | 矽折射率 | 3.48 | 常數近似 |
 | 二氧化矽折射率 | 1.44 | 常數近似 |
 | 中心波長 | 1.55 µm | Gaussian source 中心 |
-| 空間解析度 | 40 pixels/µm | FDTD 網格 |
+| 空間解析度 | 40 pixels/µm | FDTD 網格 |\n| 設計網格單元尺寸 | 0.4 × 0.4 µm² | 4.0 µm 設計區域劃分為 10 × 10 |
 | 頻率取樣點數 | 100 | Notebook；FoM 取最接近中心頻率之點 |
 
 ### 最佳化參數
 
 | 參數 | 預設值 |
 |---|---:|
-| 設計變數 | 8 × 8（64 個二元變數） |
+| 設計變數 | 10 × 10（100 個二元變數） |
 | 初始資料數 | 1,000 |
 | 最佳化迭代次數 | 100 |
 | 每輪新增候選數上限 | 30 |
@@ -212,19 +1108,1138 @@ E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
 
 | 輸入模態 | 輸出通道 | 指標 | 功率比例 | dB |
 |---|---|---|---:|---:|
-| TE₀ | Port 1（目標） | $`T_{0,1}`$ 穿透率 | **54.63%** | **−2.625 dB** |
-| TE₀ | Port 2（非目標） | $`T_{0,2}`$ 模態串擾 | **6.27%** | **−12.02 dB** |
-| TE₁ | Port 2（目標） | $`T_{1,2}`$ 穿透率 | **54.73%** | **−2.617 dB** |
-| TE₁ | Port 1（非目標） | $`T_{1,1}`$ 模態串擾 | **2.36%** | **−16.26 dB** |
+| TE₀ | Port 1（目標） | $`T_{0,1}`$ 穿透率 | **58.36%** | **−2.34 dB** |
+| TE₀ | Port 2（非目標） | $`T_{0,2}`$ 模態串擾 | **1.60%** | **−17.97 dB** |
+| TE₁ | Port 2（目標） | $`T_{1,2}`$ 穿透率 | **38.81%** | **−4.11 dB** |
+| TE₁ | Port 1（非目標） | $`T_{1,1}`$ 模態串擾 | **2.32%** | **−16.35 dB** |
 
 結果顯示，TE₀ 與 TE₁ 分別主要傳輸至預期的 Port 1 與 Port 2；非目標輸出通道的功率比例則低於各自的目標通道。上述數值為目前提供的代表性模擬結果，應與其對應的設計結構、中心波長、材料模型及 FDTD 設定一併解讀，不應外推為完整頻帶、三維元件或實際製程量測性能。
 
 ### 設計變數維度與結構自由度
 
-本專案目前的預設設計網格為 $`8\times8`$，對應 **64 個二元設計變數**：
+本專案目前的預設設計網格為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+設計變數為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+10\times10`$ 二元矩陣，展平成 100 維向量：
+```math
+\mathbf{x}\in\{0,1\}^{100}.
+```
+程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
+```math
+\rho=G_\sigma * X,
+\qquad
+G_\sigma(i,j)\propto
+\exp\left[-\frac{i^2+j^2}{2\sigma^2}\right].
+```
+平滑後的密度透過 Tanh projection 轉換：
+```math
+\tilde{\rho}=
+\frac{
+\tanh(\beta\eta)+\tanh[\beta(\rho-\eta)]
+}{
+\tanh(\beta\eta)+\tanh[\beta(1-\eta)]
+}.
+```
+Notebook 預設採用 $`5\times5`$ Gaussian kernel、$`\sigma=0.5`$、$`\beta=50`$、$`\eta=0.5`$，並將投影密度映射至 Meep <code>MaterialGrid</code>。此參數化方式保留二元搜尋變數，同時透過平滑與投影控制材料邊界。
+
+### 3. FDTD 模擬與模態傳輸
+
+模擬以 Meep <code>EigenModeSource</code> 激發輸入波導中的 TE 模態：
+
+| 模態 | 輸入本徵模態設定 | 目標輸出端口 |
+|---|---|---|
+| TE₀ | band 1、偶對稱（<code>mp.EVEN_Y</code>） | Port 1，$`y=+1.5\,\mu\mathrm{m}`$ |
+| TE₁ | band 2、奇對稱（<code>mp.ODD_Y</code>） | Port 2，$`y=-1.5\,\mu\mathrm{m}`$ |
+
+令 $`T_{ij}`$ 表示輸入模態 $`i`$ 傳輸至輸出端口 $`j`$ 的功率比：
+```math
+T_{ij}=
+\frac{|\alpha_{i\rightarrow j}^{\mathrm{out}}|^2}
+{|\alpha_i^{\mathrm{in}}|^2+\epsilon},
+```
+其中 $`\alpha`$ 為 Meep 模態分解所得的複數模態係數，$`\epsilon`$ 為數值穩定項。目標通道為 $`T_{01}`$ 與 $`T_{12}`$，非目標通道為 $`T_{02}`$ 與 $`T_{11}`$。
+
+### 4. FoM 定義
+
+採用乘積型目標函數：
+```math
+S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
+\qquad
+S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
+```
+```math
+\mathrm{FoM}_{\mathrm{NB}}=
+S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
+```
+目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
+
+### 5. FM 模型與 QUBO 建構
+
+本專案使用 PyTorch 實作二階 Factorization Machine。模型架構、前向傳播、訓練流程，以及由模型參數擷取二次交互作用係數的實作細節，請參考獨立教學 Repository：[Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)。
+
+在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
+
+QUBO 的二元能量形式為：
+```math
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
+```
+取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
+
+### 6. MPI 平行化
+
+程式使用 MPI Master–Worker 架構。Master（rank 0）負責建立資料集、訓練 FM、建構 BQM 及更新最佳解；Worker ranks 負責接收設計向量、執行 Meep 模擬並回傳 FoM。初始樣本與每輪新增候選解的評估工作可因此分配至多個 processes。
+
+## 模擬設定
+
+以下整理本專案 Notebook 與純 Python 腳本共用的預設模擬及最佳化參數。
+
+### 電磁模型參數
+
+| 參數 | Notebook 設定 | 說明 |
+|---|---:|---|
+| 模擬維度 | 2D | 二維 FDTD |
+| 設計區域 | <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+設計變數為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+10\times10`$ 二元矩陣，展平成 100 維向量：
+```math
+\mathbf{x}\in\{0,1\}^{100}.
+```
+程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
+```math
+\rho=G_\sigma * X,
+\qquad
+G_\sigma(i,j)\propto
+\exp\left[-\frac{i^2+j^2}{2\sigma^2}\right].
+```
+平滑後的密度透過 Tanh projection 轉換：
+```math
+\tilde{\rho}=
+\frac{
+\tanh(\beta\eta)+\tanh[\beta(\rho-\eta)]
+}{
+\tanh(\beta\eta)+\tanh[\beta(1-\eta)]
+}.
+```
+Notebook 預設採用 $`5\times5`$ Gaussian kernel、$`\sigma=0.5`$、$`\beta=50`$、$`\eta=0.5`$，並將投影密度映射至 Meep <code>MaterialGrid</code>。此參數化方式保留二元搜尋變數，同時透過平滑與投影控制材料邊界。
+
+### 3. FDTD 模擬與模態傳輸
+
+模擬以 Meep <code>EigenModeSource</code> 激發輸入波導中的 TE 模態：
+
+| 模態 | 輸入本徵模態設定 | 目標輸出端口 |
+|---|---|---|
+| TE₀ | band 1、偶對稱（<code>mp.EVEN_Y</code>） | Port 1，$`y=+1.5\,\mu\mathrm{m}`$ |
+| TE₁ | band 2、奇對稱（<code>mp.ODD_Y</code>） | Port 2，$`y=-1.5\,\mu\mathrm{m}`$ |
+
+令 $`T_{ij}`$ 表示輸入模態 $`i`$ 傳輸至輸出端口 $`j`$ 的功率比：
+```math
+T_{ij}=
+\frac{|\alpha_{i\rightarrow j}^{\mathrm{out}}|^2}
+{|\alpha_i^{\mathrm{in}}|^2+\epsilon},
+```
+其中 $`\alpha`$ 為 Meep 模態分解所得的複數模態係數，$`\epsilon`$ 為數值穩定項。目標通道為 $`T_{01}`$ 與 $`T_{12}`$，非目標通道為 $`T_{02}`$ 與 $`T_{11}`$。
+
+### 4. FoM 定義
+
+採用乘積型目標函數：
+```math
+S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
+\qquad
+S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
+```
+```math
+\mathrm{FoM}_{\mathrm{NB}}=
+S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
+```
+目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
+
+### 5. FM 模型與 QUBO 建構
+
+本專案使用 PyTorch 實作二階 Factorization Machine。模型架構、前向傳播、訓練流程，以及由模型參數擷取二次交互作用係數的實作細節，請參考獨立教學 Repository：[Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)。
+
+在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
+
+QUBO 的二元能量形式為：
+```math
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
+```
+取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
+
+### 6. MPI 平行化
+
+程式使用 MPI Master–Worker 架構。Master（rank 0）負責建立資料集、訓練 FM、建構 BQM 及更新最佳解；Worker ranks 負責接收設計向量、執行 Meep 模擬並回傳 FoM。初始樣本與每輪新增候選解的評估工作可因此分配至多個 processes。
+
+## 模擬設定
+
+以下整理本專案 Notebook 與純 Python 腳本共用的預設模擬及最佳化參數。
+
+### 電磁模型參數
+
+| 參數 | Notebook 設定 | 說明 |
+|---|---:|---|
+| 模擬維度 | 2D | 二維 FDTD |
+| 設計區域 | 4.0\times4.0\,\mu\mathrm{m}^2`$ | 中央材料設計區 |
+| 模擬區域 | <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+設計變數為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+10\times10`$ 二元矩陣，展平成 100 維向量：
+```math
+\mathbf{x}\in\{0,1\}^{100}.
+```
+程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
+```math
+\rho=G_\sigma * X,
+\qquad
+G_\sigma(i,j)\propto
+\exp\left[-\frac{i^2+j^2}{2\sigma^2}\right].
+```
+平滑後的密度透過 Tanh projection 轉換：
+```math
+\tilde{\rho}=
+\frac{
+\tanh(\beta\eta)+\tanh[\beta(\rho-\eta)]
+}{
+\tanh(\beta\eta)+\tanh[\beta(1-\eta)]
+}.
+```
+Notebook 預設採用 $`5\times5`$ Gaussian kernel、$`\sigma=0.5`$、$`\beta=50`$、$`\eta=0.5`$，並將投影密度映射至 Meep <code>MaterialGrid</code>。此參數化方式保留二元搜尋變數，同時透過平滑與投影控制材料邊界。
+
+### 3. FDTD 模擬與模態傳輸
+
+模擬以 Meep <code>EigenModeSource</code> 激發輸入波導中的 TE 模態：
+
+| 模態 | 輸入本徵模態設定 | 目標輸出端口 |
+|---|---|---|
+| TE₀ | band 1、偶對稱（<code>mp.EVEN_Y</code>） | Port 1，$`y=+1.5\,\mu\mathrm{m}`$ |
+| TE₁ | band 2、奇對稱（<code>mp.ODD_Y</code>） | Port 2，$`y=-1.5\,\mu\mathrm{m}`$ |
+
+令 $`T_{ij}`$ 表示輸入模態 $`i`$ 傳輸至輸出端口 $`j`$ 的功率比：
+```math
+T_{ij}=
+\frac{|\alpha_{i\rightarrow j}^{\mathrm{out}}|^2}
+{|\alpha_i^{\mathrm{in}}|^2+\epsilon},
+```
+其中 $`\alpha`$ 為 Meep 模態分解所得的複數模態係數，$`\epsilon`$ 為數值穩定項。目標通道為 $`T_{01}`$ 與 $`T_{12}`$，非目標通道為 $`T_{02}`$ 與 $`T_{11}`$。
+
+### 4. FoM 定義
+
+採用乘積型目標函數：
+```math
+S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
+\qquad
+S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
+```
+```math
+\mathrm{FoM}_{\mathrm{NB}}=
+S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
+```
+目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
+
+### 5. FM 模型與 QUBO 建構
+
+本專案使用 PyTorch 實作二階 Factorization Machine。模型架構、前向傳播、訓練流程，以及由模型參數擷取二次交互作用係數的實作細節，請參考獨立教學 Repository：[Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)。
+
+在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
+
+QUBO 的二元能量形式為：
+```math
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
+```
+取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
+
+### 6. MPI 平行化
+
+程式使用 MPI Master–Worker 架構。Master（rank 0）負責建立資料集、訓練 FM、建構 BQM 及更新最佳解；Worker ranks 負責接收設計向量、執行 Meep 模擬並回傳 FoM。初始樣本與每輪新增候選解的評估工作可因此分配至多個 processes。
+
+## 模擬設定
+
+以下整理本專案 Notebook 與純 Python 腳本共用的預設模擬及最佳化參數。
+
+### 電磁模型參數
+
+| 參數 | Notebook 設定 | 說明 |
+|---|---:|---|
+| 模擬維度 | 2D | 二維 FDTD |
+| 設計區域 | <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+設計變數為 <div align="center">
+
+<h1>
+  矽光子模態分波解多工器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.25em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-10%C3%9710%20Binary%20Grid-orange" alt="10x10 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **10 × 10 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（$`y=+1.5\,\mu\mathrm{m}`$）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（$`y=-1.5\,\mu\mathrm{m}`$）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
+  <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
+</p>
+
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 10 × 10 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+10\times10`$ 二元矩陣，展平成 100 維向量：
+```math
+\mathbf{x}\in\{0,1\}^{100}.
+```
+程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
+```math
+\rho=G_\sigma * X,
+\qquad
+G_\sigma(i,j)\propto
+\exp\left[-\frac{i^2+j^2}{2\sigma^2}\right].
+```
+平滑後的密度透過 Tanh projection 轉換：
+```math
+\tilde{\rho}=
+\frac{
+\tanh(\beta\eta)+\tanh[\beta(\rho-\eta)]
+}{
+\tanh(\beta\eta)+\tanh[\beta(1-\eta)]
+}.
+```
+Notebook 預設採用 $`5\times5`$ Gaussian kernel、$`\sigma=0.5`$、$`\beta=50`$、$`\eta=0.5`$，並將投影密度映射至 Meep <code>MaterialGrid</code>。此參數化方式保留二元搜尋變數，同時透過平滑與投影控制材料邊界。
+
+### 3. FDTD 模擬與模態傳輸
+
+模擬以 Meep <code>EigenModeSource</code> 激發輸入波導中的 TE 模態：
+
+| 模態 | 輸入本徵模態設定 | 目標輸出端口 |
+|---|---|---|
+| TE₀ | band 1、偶對稱（<code>mp.EVEN_Y</code>） | Port 1，$`y=+1.5\,\mu\mathrm{m}`$ |
+| TE₁ | band 2、奇對稱（<code>mp.ODD_Y</code>） | Port 2，$`y=-1.5\,\mu\mathrm{m}`$ |
+
+令 $`T_{ij}`$ 表示輸入模態 $`i`$ 傳輸至輸出端口 $`j`$ 的功率比：
+```math
+T_{ij}=
+\frac{|\alpha_{i\rightarrow j}^{\mathrm{out}}|^2}
+{|\alpha_i^{\mathrm{in}}|^2+\epsilon},
+```
+其中 $`\alpha`$ 為 Meep 模態分解所得的複數模態係數，$`\epsilon`$ 為數值穩定項。目標通道為 $`T_{01}`$ 與 $`T_{12}`$，非目標通道為 $`T_{02}`$ 與 $`T_{11}`$。
+
+### 4. FoM 定義
+
+採用乘積型目標函數：
+```math
+S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
+\qquad
+S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
+```
+```math
+\mathrm{FoM}_{\mathrm{NB}}=
+S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
+```
+目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
+
+### 5. FM 模型與 QUBO 建構
+
+本專案使用 PyTorch 實作二階 Factorization Machine。模型架構、前向傳播、訓練流程，以及由模型參數擷取二次交互作用係數的實作細節，請參考獨立教學 Repository：[Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)。
+
+在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
+
+QUBO 的二元能量形式為：
+```math
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
+```
+取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
+
+### 6. MPI 平行化
+
+程式使用 MPI Master–Worker 架構。Master（rank 0）負責建立資料集、訓練 FM、建構 BQM 及更新最佳解；Worker ranks 負責接收設計向量、執行 Meep 模擬並回傳 FoM。初始樣本與每輪新增候選解的評估工作可因此分配至多個 processes。
+
+## 模擬設定
+
+以下整理本專案 Notebook 與純 Python 腳本共用的預設模擬及最佳化參數。
+
+### 電磁模型參數
+
+| 參數 | Notebook 設定 | 說明 |
+|---|---:|---|
+| 模擬維度 | 2D | 二維 FDTD |
+| 設計區域 | 4.0\times4.0\,\mu\mathrm{m}^2`$ | 中央材料設計區 |
+| 模擬區域 | 7.0\times6.0\,\mu\mathrm{m}^2`$ | $`S_x\times S_y`$ |
+| 輸入波導寬度 | 1.8 µm | 多模態輸入端 |
+| 輸出波導寬度 | 0.5 µm | 兩個單模態輸出端 |
+| 波導延伸長度 | 0.5 µm | 設計區外固定波導 |
+| PML 厚度 | 1.0 µm | 吸收邊界 |
+| 矽折射率 | 3.48 | 常數近似 |
+| 二氧化矽折射率 | 1.44 | 常數近似 |
+| 中心波長 | 1.55 µm | Gaussian source 中心 |
+| 空間解析度 | 40 pixels/µm | FDTD 網格 |\n| 設計網格單元尺寸 | 0.4 × 0.4 µm² | 4.0 µm 設計區域劃分為 10 × 10 |
+| 頻率取樣點數 | 100 | Notebook；FoM 取最接近中心頻率之點 |
+
+### 最佳化參數
+
+| 參數 | 預設值 |
+|---|---:|
+| 設計變數 | 10 × 10（100 個二元變數） |
+| 初始資料數 | 1,000 |
+| 最佳化迭代次數 | 100 |
+| 每輪新增候選數上限 | 30 |
+| FM 訓練 Epoch | 1,000 |
+| FM factorization size | 10 |
+| Batch size | 32 |
+| Optimizer | Adam |
+| Learning rate | $\(10^{-3}\)$ |
+| Weight decay | $\(10^{-4}\)$ |
+| Loss function | MSE |
+| Sampler | QA；無法使用時回退至 SA |
+| `num_reads` | 2,000 |
+| `NFREQ` | 100 |
+
+初始設計採用平滑隨機二元網格；模態傳輸率以最接近中心頻率的監測點計算最佳化 FoM。
+
+## 結果與討論
+
+### 代表性模擬結果
+
+在目前的設計與模擬設定下，模態傳輸與非目標通道的代表性結果如下。表中傳輸率及串擾以輸入模態功率歸一化，括號內為相應的 dB 表示。
+
+| 輸入模態 | 輸出通道 | 指標 | 功率比例 | dB |
+|---|---|---|---:|---:|
+| TE₀ | Port 1（目標） | $`T_{0,1}`$ 穿透率 | **58.36%** | **−2.34 dB** |
+| TE₀ | Port 2（非目標） | $`T_{0,2}`$ 模態串擾 | **1.60%** | **−17.97 dB** |
+| TE₁ | Port 2（目標） | $`T_{1,2}`$ 穿透率 | **38.81%** | **−4.11 dB** |
+| TE₁ | Port 1（非目標） | $`T_{1,1}`$ 模態串擾 | **2.32%** | **−16.35 dB** |
+
+結果顯示，TE₀ 與 TE₁ 分別主要傳輸至預期的 Port 1 與 Port 2；非目標輸出通道的功率比例則低於各自的目標通道。上述數值為目前提供的代表性模擬結果，應與其對應的設計結構、中心波長、材料模型及 FDTD 設定一併解讀，不應外推為完整頻帶、三維元件或實際製程量測性能。
+
+### 設計變數維度與結構自由度
+
+10\times10`$，對應 **100 個二元設計變數**：
 
 ```math
-\mathbf{x}\in\{0,1\}^{64}.
+\mathbf{x}\in\{0,1\}^{100}.
 ```
 增加設計變數數量可提升設計空間的維度，使最佳化程序能描述更多局部材料配置，因而增加結構自由度。然而，設計維度增加也會擴大 FM 代理模型需要學習的變數交互作用與設計空間範圍。若初始 FDTD 樣本數不足，訓練資料可能無法充分涵蓋高維設計空間，進而降低代理模型對候選結構 FoM 的預測可靠度。
 
@@ -246,7 +2261,7 @@ Demux_Tutorial/
 │   ├── DEMUX_schematic.png
 │   ├── design2_TE0.png
 │   └── design2_TE1.png
-├── demux_8x8.py
+├── demux_10x10.py
 ├── demux_tutorial.ipynb
 └── factorization_machine.py
 ```
@@ -254,7 +2269,7 @@ Demux_Tutorial/
 | 檔案 | 功能 |
 |---|---|
 | <code>demux_tutorial.ipynb</code> | 模態分波器反向設計教學 Notebook，包含方法說明與程式實作 |
-| <code>demux_8x8.py</code> | 與 Notebook 相同流程的純 Python 腳本，可透過 MPI 執行 |
+| <code>demux_10x10.py</code> | 與 Notebook 相同流程的純 Python 腳本，可透過 MPI 執行 |
 | <code>factorization_machine.py</code> | PyTorch 二階 FM 模型；詳細說明請參考 [Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch) |
 | <code>assets/</code> | 模擬幾何示意與 TE 模態場型圖片 |
 | <code>LICENSE</code> | MIT License |
@@ -280,10 +2295,10 @@ Demux_Tutorial/
 
 ### 執行純 Python 腳本
 
-`demux_8x8.py` 由 Notebook 的程式碼儲存格整理而成，兩者使用相同的參數與最佳化流程。建議以 MPI 啟動，並至少使用 2 個 processes（1 個 Master 與至少 1 個 Worker）：
+`demux_10x10.py` 由 Notebook 的程式碼儲存格整理而成，兩者使用相同的參數與最佳化流程。建議以 MPI 啟動，並至少使用 2 個 processes（1 個 Master 與至少 1 個 Worker）：
 
 ```bash
-mpirun -np 4 python demux_8x8.py --name demux_8x8
+mpirun -np 4 python demux_10x10.py --name demux_10x10
 ```
 
 ### 開啟 Notebook
