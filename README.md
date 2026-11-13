@@ -1,6 +1,12 @@
 <div align="center">
 
-<h1>基於 FMQA 的 8 × 8 矽光子模態分波器反向設計<br>Inverse Design of a Silicon Photonic Mode-Division Demultiplexer</h1>
+<h1>
+  矽光子模態分波器反向設計<br>
+  反向設計與 FDTD 模擬教學<br>
+  <span style="font-size: 0.45em;">
+    Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
+  </span>
+</h1>
 
 <p>
   <strong>
@@ -44,7 +50,7 @@
   <br><em>圖 1. Repository 所提供之模態分波器示意圖。</em>
 </p>
 
-> **模型範圍：** 目前程式採用二維 Meep 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+> **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
 
 ## 研究目標
 
