@@ -1,7 +1,7 @@
 <div align="center">
 
 <h1>
-  矽光子模態分波器反向設計<br>
+  矽光子模態分波解多工器反向設計<br>
   反向設計與 FDTD 模擬教學<br>
   <span style="font-size: 0.25em;">
     Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
@@ -39,7 +39,7 @@
 
 ## 概述
 
-模態分波器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+模態分波解多工器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
 
 本 Repository 建立一個以 **8 × 8 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
 
@@ -47,7 +47,7 @@
 
 <p align="center">
   <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
-  <br><em>圖 1. Repository 所提供之模態分波器示意圖。</em>
+  <br><em>圖 1. 模態分波解多工器示意圖。</em>
 </p>
 
 > **模型範圍：** 目前程式採用二維 MEEP 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
@@ -133,7 +133,7 @@ T_{ij}=
 
 ### 4. FoM 定義
 
-**Notebook 版本**採用乘積型目標函數：
+採用乘積型目標函數：
 ```math
 S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
 \qquad
@@ -144,18 +144,6 @@ S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
 S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
 ```
 目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
-
-**獨立 Python 腳本 <code>demux_8x8.py</code>** 使用另一種加權對數 FoM：
-```math
-\mathrm{FoM}_{\mathrm{PY}}=
-\log_{10}(T_{01}+\epsilon)+\log_{10}(T_{12}+\epsilon)
--w\left[
-\log_{10}(T_{02}+\epsilon)+\log_{10}(T_{11}+\epsilon)
-\right],
-```
-其中程式設定 $`w=0.2`$，並同樣以負 FoM 作為最小化目標。
-
-> **比較注意：** 兩個入口目前採用不同 FoM 定義，因此其最佳 FoM 數值不可直接互相比較。若要進行嚴格方法比較，應先統一目標函數、初始資料分佈、FM 因子維度、取樣器與模擬預算。
 
 ### 5. Factorization Machine 與 QUBO
 
@@ -169,7 +157,7 @@ w_0+\sum_i w_i x_i+
 -\sum_i v_{f,i}^{\,2}x_i^2
 \right].
 ```
-其中 $`w_0`$ 為偏置項、$`w_i`$ 為線性係數、$`v_{f,i}`$ 為潛在因子，$`k`$ 為因子維度。訓練後將 FM 係數轉換為 QUBO：
+其中 $`w_0`$ 為偏差項、$`w_i`$ 為線性係數、$`v_{f,i}`$ 為潛在因子，$`k`$ 為因子維度。訓練後將 FM 係數轉換為 QUBO：
 ```math
 E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
 \qquad x_i\in\{0,1\}.
@@ -246,7 +234,7 @@ QUBO sampler 產生低能量候選組態後，仍須以 Meep FDTD 重新計算 F
 
 因此，設計變數數量與初始資料量需要共同考量：提高網格解析度固然能提供更高的幾何表達能力，但通常也需要增加初始模擬樣本，以支援 FM 模型建立較具代表性的設計變數—性能映射。此資料需求並非單純與變數數量成固定比例，仍應透過不同設計維度、資料集大小與收斂表現進行評估。
 
-### 對緊湊型模態分波器的結構設計觀點
+### 對緊湊型模態分波解多工器的結構設計觀點
 
 對於需要在極小傳播距離內實現穩定模態分流的傳統模態分波多工器，設計重點未必是單純增加設計自由度，或追求高度不規則的材料邊界。本研究提出另一個值得探討的方向：在設計區域內配置更精細且分布均勻的微小單元，藉由局部有效折射率調變，逐步建立所需的相位匹配條件，使不同輸入模態能在有限距離內耦合至指定輸出通道。
 
@@ -269,7 +257,7 @@ Demux_Tutorial/
 
 | 檔案 | 功能 |
 |---|---|
-| <code>demux_tutorial.ipynb</code> | FMQA 模態分波器反向設計教學；包含 QA 路徑與 SA fallback |
+| <code>demux_tutorial.ipynb</code> | FMQA 模態分波解多工器反向設計教學；包含 QA 路徑與 SA fallback |
 | <code>demux_8x8.py</code> | 獨立 Python 最佳化實作，預設使用 SA |
 | <code>factorization_machine.py</code> | 二階 Factorization Machine 與 FM 係數至二次項的轉換 |
 | <code>assets/</code> | 模擬幾何示意與 TE 模態場型圖片 |
