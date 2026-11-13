@@ -153,8 +153,8 @@ S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
 
 QUBO 的二元能量形式為：
 ```math
-E(\\mathbf{x})=c+\\sum_i h_i x_i+\\sum_{i<j}Q_{ij}x_ix_j,
-\\qquad x_i\\in\\{0,1\\}.
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
 ```
 取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
 
