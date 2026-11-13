@@ -3,7 +3,7 @@
 <h1>
   矽光子模態分波器反向設計<br>
   反向設計與 FDTD 模擬教學<br>
-  <span style="font-size: 0.45em;">
+  <span style="font-size: 0.25em;">
     Inverse Design of a Silicon Photonic Mode-Division Demultiplexer
   </span>
 </h1>
@@ -46,7 +46,7 @@
 在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
 
 <p align="center">
-  <img src="assets/DEMUX_schematic.png" width="85%" alt="Mode-division demultiplexer schematic">
+  <img src="assets/DEMUX_schematic.png" width="55%" alt="Mode-division demultiplexer schematic">
   <br><em>圖 1. Repository 所提供之模態分波器示意圖。</em>
 </p>
 
@@ -63,8 +63,8 @@
 現有素材亦包含以不同輸入模態進行模擬的場型圖：
 
 <p align="center">
-  <img src="assets/design2_TE0.png" width="48%" alt="TE0 input field result">
-  <img src="assets/design2_TE1.png" width="48%" alt="TE1 input field result">
+  <img src="assets/design2_TE0.png" width="40%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="40%" alt="TE1 input field result">
   <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
 </p>
 
