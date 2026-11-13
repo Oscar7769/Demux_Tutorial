@@ -38,6 +38,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import scipy.ndimage
 from datetime import datetime
 
 # --- MPI Initialization ---
@@ -180,6 +181,15 @@ def create_smoothed_material_grid_geometry(binary_vector, grid_rows, grid_cols,
     )
     
     return [design_block]
+
+
+def generate_smooth_random_config(rows, cols, threshold=0.5):
+    small_r, small_c = max(1, rows // 2), max(1, cols // 2)
+    noise = np.random.rand(small_r, small_c)
+    smooth_noise = scipy.ndimage.zoom(noise, zoom=2, order=1)
+    smooth_noise = smooth_noise[:rows, :cols]
+    binary = (smooth_noise > threshold).astype(int).flatten()
+    return binary
 
 
 # ==============================================================================
@@ -633,8 +643,10 @@ def master_node():
 
     # --- Generate Initial Dataset in Parallel ---
     print(f"\n--- Step 3: Generating Initial Dataset of {INIT_DATASET_SIZE} Samples (in parallel) ---")
-    si_probability = 0.9
-    initial_configs = np.random.choice([0, 1], size=(INIT_DATASET_SIZE, NUM_VARIABLES), p=[1 - si_probability, si_probability])
+    initial_configs = np.array([
+        generate_smooth_random_config(GRID_ROWS, GRID_COLS)
+        for _ in range(INIT_DATASET_SIZE)
+    ])
     fom_cache = {}
     tasks = [initial_configs[i] for i in range(INIT_DATASET_SIZE)]
     results = parallel_evaluate(tasks, fom_cache, GRID_ROWS, GRID_COLS)
