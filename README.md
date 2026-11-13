@@ -152,12 +152,10 @@ S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
 在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
 
 QUBO 的二元能量形式為：
-
 ```math
 E(\\mathbf{x})=c+\\sum_i h_i x_i+\\sum_{i<j}Q_{ij}x_ix_j,
 \\qquad x_i\\in\\{0,1\\}.
 ```
-
 取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
 
 ### 6. MPI 平行化
