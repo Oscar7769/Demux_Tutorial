@@ -68,7 +68,7 @@
   <br><em>圖 2. 左圖為 TE₀ 輸入場型；右圖為 TE₁ 輸入場型。</em>
 </p>
 
-以下列出目前提供之代表性模擬結果。由於最佳化程式具有隨機性，且不同程式入口的 FoM 定義與最佳化參數並不完全相同，這些數值應搭配對應的模擬設定解讀，不宜直接視為跨版本比較結果。
+以下列出本專案目前提供之代表性模擬結果。數值應與其對應的設計結構、中心波長、材料模型及 FDTD 模擬設定一併解讀。
 
 ## 方法
 
@@ -145,24 +145,20 @@ S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
 ```
 目標為最大化 FoM；程式回傳 $`-\mathrm{FoM}`$，以符合 QUBO sampler 的能量最小化形式。
 
-### 5. Factorization Machine 與 QUBO
+### 5. FM 模型與 QUBO 建構
 
-FM 使用線性項與低秩二階交互作用近似 FoM：
+本專案使用 PyTorch 實作二階 Factorization Machine。模型架構、前向傳播、訓練流程，以及由模型參數擷取二次交互作用係數的實作細節，請參考獨立教學 Repository：[Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)。
+
+在本模態分波器設計流程中，訓練完成的 FM 模型透過 `get_bhQ()` 取得偏置、線性係數與二次交互作用矩陣，再由 `dimod.BinaryQuadraticModel` 建立 BQM，供量子退火或模擬退火取樣器搜尋候選設計組態。
+
+QUBO 的二元能量形式為：
+
 ```math
-\hat{y}(\mathbf{x})=
-w_0+\sum_i w_i x_i+
-\frac{1}{2}\sum_{f=1}^{k}
-\left[
-\left(\sum_i v_{f,i}x_i\right)^2
--\sum_i v_{f,i}^{\,2}x_i^2
-\right].
+E(\\mathbf{x})=c+\\sum_i h_i x_i+\\sum_{i<j}Q_{ij}x_ix_j,
+\\qquad x_i\\in\\{0,1\\}.
 ```
-其中 $`w_0`$ 為偏差項、$`w_i`$ 為線性係數、$`v_{f,i}`$ 為潛在因子，$`k`$ 為因子維度。訓練後將 FM 係數轉換為 QUBO：
-```math
-E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
-\qquad x_i\in\{0,1\}.
-```
-QUBO sampler 產生低能量候選組態後，仍須以 Meep FDTD 重新計算 FoM。此流程將 FM 作為代理模型，而非以代理模型預測值取代最終電磁模擬。
+
+取樣器產生候選組態後，仍須以 Meep FDTD 重新計算 FoM；代理模型預測值不會取代最終電磁模擬。
 
 ### 6. MPI 平行化
 
@@ -170,7 +166,7 @@ QUBO sampler 產生低能量候選組態後，仍須以 Meep FDTD 重新計算 F
 
 ## 模擬設定
 
-以下參數根據目前 Notebook 與 Python 腳本整理。兩個實作版本的差異另列於後表。
+以下整理本專案 Notebook 與純 Python 腳本共用的預設模擬及最佳化參數。
 
 ### 電磁模型參數
 
@@ -189,24 +185,26 @@ QUBO sampler 產生低能量候選組態後，仍須以 Meep FDTD 重新計算 F
 | 空間解析度 | 40 pixels/µm | FDTD 網格 |
 | 頻率取樣點數 | 100 | Notebook；FoM 取最接近中心頻率之點 |
 
-### 最佳化參數與程式版本差異
+### 最佳化參數
 
-| 設定 | <code>demux_tutorial.ipynb</code> | <code>demux_8x8.py</code> |
-|---|---:|---:|
-| 設計變數 | 64（8 × 8） | 64（8 × 8） |
-| 初始資料數 | 1,000 | 1,000 |
-| 初始結構 | 平滑隨機二元網格 | 平滑隨機二元網格 |
-| 迭代次數 | 100 | 100 |
-| 每輪新增資料上限 | 30 | 30 |
-| FM epochs | 1,000 | 1,000 |
-| FM factorization size | 10 | 64 |
-| Learning rate | $`10^{-3}`$ | $`10^{-3}`$ |
-| Sampler | QA，失敗時回退 SA | SA |
-| <code>num_reads</code> | 2,000 | 500 |
-| FoM | 乘積型 | 加權對數型 |
-| <code>NFREQ</code> | 100 | 1 |
+| 參數 | 預設值 |
+|---|---:|
+| 設計變數 | 8 × 8（64 個二元變數） |
+| 初始資料數 | 1,000 |
+| 最佳化迭代次數 | 100 |
+| 每輪新增候選數上限 | 30 |
+| FM 訓練 Epoch | 1,000 |
+| FM factorization size | 10 |
+| Batch size | 32 |
+| Optimizer | Adam |
+| Learning rate | $\(10^{-3}\)$ |
+| Weight decay | $\(10^{-4}\)$ |
+| Loss function | MSE |
+| Sampler | QA；無法使用時回退至 SA |
+| `num_reads` | 2,000 |
+| `NFREQ` | 100 |
 
-兩個程式入口目前皆使用相同的平滑隨機初始結構產生方式，以及 8 × 8 二元設計網格與 Meep 評估；但 FoM 定義、FM 因子維度、取樣器與頻率取樣設定仍不完全相同。本文將其視為同一設計問題的兩種程式實作，不將其執行結果直接視為控制變因一致的比較實驗。
+初始設計採用平滑隨機二元網格；模態傳輸率以最接近中心頻率的監測點計算最佳化 FoM。
 
 ## 結果與討論
 
@@ -257,9 +255,9 @@ Demux_Tutorial/
 
 | 檔案 | 功能 |
 |---|---|
-| <code>demux_tutorial.ipynb</code> | FMQA 模態分波解多工器反向設計教學；包含 QA 路徑與 SA fallback |
-| <code>demux_8x8.py</code> | 獨立 Python 最佳化實作，預設使用 SA |
-| <code>factorization_machine.py</code> | 二階 Factorization Machine 與 FM 係數至二次項的轉換 |
+| <code>demux_tutorial.ipynb</code> | 模態分波器反向設計教學 Notebook，包含方法說明與程式實作 |
+| <code>demux_8x8.py</code> | 與 Notebook 相同流程的純 Python 腳本，可透過 MPI 執行 |
+| <code>factorization_machine.py</code> | PyTorch 二階 FM 模型；詳細說明請參考 [Factorization Machine in PyTorch](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch) |
 | <code>assets/</code> | 模擬幾何示意與 TE 模態場型圖片 |
 | <code>LICENSE</code> | MIT License |
 
@@ -282,54 +280,53 @@ Demux_Tutorial/
 
 本 Repository 未提供固定版本的 <code>requirements.txt</code> 或 Conda environment 檔案。建議先依照官方文件安裝與系統 MPI 相容的 Meep，再安裝其餘 Python 依賴。Meep 安裝說明請參考 [Meep Installation Guide](https://meep.readthedocs.io/en/latest/Installation/)。
 
-### 1. 執行獨立 Python 版本（SA）
+### 執行純 Python 腳本
 
-在 Repository 根目錄執行：
-
-```bash
-mpirun -np 4 python demux_8x8.py
-```
-
-### 2. 執行 Notebook 版本（QA／SA fallback）
-
-Notebook 內含 MPI Master–Worker 工作流程。若要執行完整最佳化，可先匯出為 Python 腳本：
+`demux_8x8.py` 由 Notebook 的程式碼儲存格整理而成，兩者使用相同的參數與最佳化流程。建議以 MPI 啟動，並至少使用 2 個 processes（1 個 Master 與至少 1 個 Worker）：
 
 ```bash
-jupyter nbconvert --to script demux_tutorial.ipynb
-mpirun -np 4 python demux_tutorial.py --name demux_8x8
+mpirun -np 4 python demux_8x8.py --name demux_8x8
 ```
 
-上述範例啟動 4 個 MPI processes（1 個 Master、3 個 Workers）。完整平行評估至少需要 2 個 processes。實際數量應依伺服器 CPU、記憶體、MPI runtime 與 Meep 建置方式調整。
+### 開啟 Notebook
+
+若主要目的是閱讀方法、檢視程式區塊或逐節理解設計流程，可在 Repository 根目錄啟動 Jupyter：
+
+```bash
+jupyter lab
+```
+
+開啟 `demux_tutorial.ipynb`。Notebook 與純 Python 腳本使用相同的程式邏輯；完整 MPI 最佳化仍應透過多個 MPI processes 啟動。
 
 ### 輸出內容
 
-Notebook 版本會在目前工作目錄建立 <code>results/</code>，並將 BQM 與模擬結果分別存放於時間戳記資料夾。主要輸出包括：
+程式會在目前工作目錄建立 <code>results/</code>，並將 BQM 與模擬結果分別存放於時間戳記資料夾。主要輸出包括：
 
 - <code>experiment_data.npz</code>：設計樣本、FoM、最佳組態與歷程資料。
 - <code>experiment_report.json</code>：最佳 FoM、參數、效能與輸出路徑摘要。
 - BQM JSON 檔案：各迭代所建立的線性與二次係數。
 - 最佳二元結構、材料分佈及電場強度圖。
 
-<code>demux_8x8.py</code> 會建立以 <code>results_8x8_res...</code> 命名的結果資料夾，保存 BQM、資料備份與後處理圖片。實際輸出以各程式版本的執行訊息為準。
+BQM 係數檔案、資料備份與後處理圖片會依執行時間分別保存於對應資料夾。實際輸出檔名以程式執行時建立的時間戳記資料夾為準。
 
 ## 限制與注意事項
 
 1. **二維模型限制：** 材料沿平面外方向以無限延伸描述，並未完整模擬有限厚度 SOI 波導的垂直方向侷限。
 2. **材料近似：** 矽與二氧化矽使用常數折射率，未考慮色散、吸收、側壁角度及製程誤差。
-3. **頻寬限制：** Notebook 的 FoM 以最接近中心頻率的監測點計算，不能據此推論整個頻帶內的分波性能。
-4. **目標函數差異：** Notebook 與 <code>demux_8x8.py</code> 的 FoM 定義不同，數值不可直接比較。
-5. **隨機最佳化：** 初始樣本及 QA／SA 取樣具有隨機性；最佳候選解僅代表該次執行已評估樣本中的 best-found solution，不保證為全域最佳解。
-6. **D-Wave 使用條件：** QA 路徑需要安裝 D-Wave Ocean SDK、有效憑證及可用 QPU；Notebook 在相關功能不可用時會回退至 SA。
-7. **未完成的後處理介面：** Notebook 中的 <code>plot_chain_break_history()</code> 與 <code>generate_gds()</code> 目前為未實作函式，現階段不會產生 chain-break 歷程圖或 GDS 檔案。
-8. **製程驗證：** 本 Repository 提供數值模擬與反向設計程式，尚不能替代三維模擬、製程可行性分析及實際元件量測。
+3. **頻寬限制：** FoM 以最接近中心頻率的監測點計算，不能據此推論整個頻帶內的分波性能。
+4. **隨機最佳化：** 初始樣本及 QA／SA 取樣具有隨機性；最佳候選解僅代表該次執行已評估樣本中的 best-found solution，不保證為全域最佳解。
+5. **D-Wave 使用條件：** QA 路徑需要安裝 D-Wave Ocean SDK、有效憑證及可用 QPU；若相關功能不可用，程式會回退至 SA。
+6. **未完成的後處理介面：** <code>plot_chain_break_history()</code> 與 <code>generate_gds()</code> 目前為保留介面，函式主體尚未實作，因此不會產生 chain-break 歷程圖或 GDS 檔案。
+7. **製程驗證：** 本 Repository 提供數值模擬與反向設計程式，尚不能替代三維模擬、製程可行性分析及實際元件量測。
 
 ## 參考資料
 
 1. S. Rendle, “Factorization Machines,” *2010 IEEE International Conference on Data Mining*, pp. 995–1000, 2010. [https://doi.org/10.1109/ICDM.2010.127](https://doi.org/10.1109/ICDM.2010.127)
-2. A. F. Oskooi, D. Roundy, M. Ibanescu, P. Bermel, J. D. Joannopoulos, and S. G. Johnson, “Meep: A flexible free-software package for electromagnetic simulations by the FDTD method,” *Computer Physics Communications*, vol. 181, no. 3, pp. 687–702, 2010. [https://doi.org/10.1016/j.cpc.2009.11.008](https://doi.org/10.1016/j.cpc.2009.11.008)
-3. [Meep Documentation](https://meep.readthedocs.io/en/latest/)
-4. [D-Wave Ocean Documentation](https://docs.dwavequantum.com/en/latest/ocean/)
-5. [PyTorch Documentation](https://pytorch.org/docs/stable/index.html)
+2. [Factorization Machine in PyTorch — Tutorial Repository](https://github.com/Oscar7769/Factorization_Machine_in_PyTorch)
+3. A. F. Oskooi, D. Roundy, M. Ibanescu, P. Bermel, J. D. Joannopoulos, and S. G. Johnson, “Meep: A flexible free-software package for electromagnetic simulations by the FDTD method,” *Computer Physics Communications*, vol. 181, no. 3, pp. 687–702, 2010. [https://doi.org/10.1016/j.cpc.2009.11.008](https://doi.org/10.1016/j.cpc.2009.11.008)
+4. [Meep Documentation](https://meep.readthedocs.io/en/latest/)
+5. [D-Wave Ocean Documentation](https://docs.dwavequantum.com/en/latest/ocean/)
+6. [PyTorch Documentation](https://pytorch.org/docs/stable/index.html)
 
 ## 授權
 
