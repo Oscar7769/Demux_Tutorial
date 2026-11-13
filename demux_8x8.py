@@ -1,187 +1,169 @@
 """
-================================================================================
-基於 FMQA 的光子模式複用器逆向設計
-- 小規模概念驗證版本 (已修正物理模擬核心) -
-*** 版本 2: 整合高斯平滑與 MaterialGrid ***
-================================================================================
 
-本腳本實現了一個用於光子模式複用器 (MDM) 的迭代式逆向設計框架。該框架結合了
-機器學習與量子啟發式優化方法（分解機 Factorization Machine + 量子退火 Quantum
-Annealing, 簡稱 FMQA）。
+Standalone Python implementation of demux_tutorial.ipynb.
 
-核心工作流程：
-1.  **訓練 (Train)**：使用已知的 MDM 結構及其模擬性能（品質因數 FoM）數據集，
-    訓練一個分解機 (FM) 模型。
-2.  **求解 (Solve)**：將訓練好的 FM 模型轉換為一個二元二次模型 (BQM)，然後使用
-    模擬退火器求解該模型，以找到具有潛力的新設計方案。
-3.  **驗證 (Verify)**：從退火器得到的最佳候選結構，透過高精度的 FDTD 物理模擬
-    (MEEP) 進行嚴格的性能評估。
-4.  **迭代 (Iterate)**：將經過驗證的新數據加入數據集，重複上述循環，持續優化設計。
+The Notebook code cells are preserved in execution order.
 
-此版本的關鍵特性：
--   **問題規模**：專為一個小的 8x8 網格（64 個二元變數）設計，主要用於驗證
-    演算法的可行性。
--   **模擬精度**：採用高 MEEP 模擬解析度 (40)，並使用物理上精確的
-    `EigenModeSource` 來確保準確的物理評估結果。
--   **平滑幾何 (NEW)**：所有 0/1 結構在模擬前都會透過高斯核進行捲積，
-    轉換為連續密度 (0.0-1.0) 的 `MaterialGrid`，以實現平滑、圓角的結構。
--   **並行計算**：利用 MPI 將計算密集型的 MEEP 模擬任務分配給多個進程，加速
-    數據生成。
-
-依賴庫：
--   mpi4py, PyTorch, dimod, dwave-samplers, meep, numpy, matplotlib
--   (推薦) scipy: 用於更快的捲積 (convolve2d)
--   需要一個外部的 `factorization_machine.py` 模組。
 """
+
+
+
+# -----------------------------------------------------------------------------
+# Notebook code cell 2
+# -----------------------------------------------------------------------------
 import os
+import sys
 import time
+import json
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import scipy.ndimage
 from datetime import datetime
+import scipy.ndimage 
 
-# --- MPI Initialization ---
 from mpi4py import MPI
-
-# --- PyTorch and QUBO Libraries ---
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
 import dimod
 from dwave.samplers import SimulatedAnnealingSampler
 
-# --- MEEP FDTD Simulation Libraries ---
+try:
+    from dwave.system import DWaveSampler, EmbeddingComposite
+    DWAVE_AVAILABLE = True
+except ImportError:
+    DWAVE_AVAILABLE = False
+    if MPI.COMM_WORLD.Get_rank() == 0:
+        print("Warning: dwave-ocean-sdk not installed. QA mode will fail.")
+
 import meep as mp
-# 假設 factorization_machine.py 在同一目錄下
 from factorization_machine import FactorizationMachine
 
-
-
-
 # ==============================================================================
-# SECTION 0: MPI SETUP & HELPER FUNCTIONS
+# SECTION 0: GLOBAL PARAMETERS
 # ==============================================================================
 
-# --- Initialize MPI ---
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
 
-# --- Define task tags ---
+# -----------------------------------------------------------------------------
+# Notebook code cell 4
+# -----------------------------------------------------------------------------
 WORK_TAG = 1
 STOP_TAG = 2
 
-# ==============================================================================
-# SECTION 1: PYTORCH FACTORIZATION MACHINE TRAINING
-# ==============================================================================
+RESOLUTION = 40
+DPML = 1.0
+MDM_LC = 6.5
+WG_LENGTH = 0.5
+MULTIMODE_WG_WIDTH = 1.8
+SINGLEMODE_WG_WIDTH = 0.5
 
-def train_fm_model(model, X_train, Y_train, num_epoch, learning_rate):
-    """
-    Standard training loop for the PyTorch FM model.
-    """
-    # This function is only called by the master (rank 0)
-    print(f"--- Training FM model for {num_epoch} epochs ---")
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    criterion = nn.MSELoss()
-    X_tensor = torch.from_numpy(X_train).float()
-    Y_tensor = torch.from_numpy(Y_train).float().view(-1, 1)
+SX = 2 * DPML + MDM_LC + 2 * WG_LENGTH
+SY = 2 * DPML + MDM_LC
+CELL = mp.Vector3(SX, SY, 0)
 
-    device = next(model.parameters()).device
-    X_tensor = X_tensor.to(device)
-    Y_tensor = Y_tensor.to(device)
+output_port1_y = 1.5
+output_port2_y = -1.5
 
-    for epoch in range(num_epoch):
-        model.train()
-        optimizer.zero_grad()
-        outputs = model(X_tensor)
-        loss = criterion(outputs, Y_tensor)
-        loss.backward()
-        optimizer.step()
-        if (epoch + 1) % 100 == 0:
-            print(f'''Epoch [{epoch+1}/{num_epoch}], Loss: {loss.item():.6f}''')
-    print("--- FM Training Complete ---")
-    return model
+N_SIO2 = 1.44
+N_SI = 3.48
+SIO2_MEDIUM = mp.Medium(index=N_SIO2)
+SI_MEDIUM = mp.Medium(index=N_SI)
 
-# ==============================================================================
-# SECTION 1.5: SMOOTHING & GEOMETRY HELPER FUNCTIONS (NEW)
-# ==============================================================================
+wl_cen = 1.55 
+FCEN = 1 / wl_cen
+DF = 0.1 * FCEN
+NFREQ = 100
 
+# -----------------------------------------------------------------------------
+# Notebook code cell 6
+# -----------------------------------------------------------------------------
 def gaussian_kernel(size=5, sigma=1.0):
-    """生成 2D 高斯核"""
     ax = np.arange(-(size//2), size//2 + 1)
     xx, yy = np.meshgrid(ax, ax)
     kernel = np.exp(-(xx**2 + yy**2) / (2.0 * sigma**2))
     kernel /= np.sum(kernel)
     return kernel
 
-def convolve2d_same(img, kernel):
-    """
-    使用 'reflect' 邊界模式的 2D 捲積 (scipy 的備案)
-    """
-    k = kernel.shape[0]
-    pad = k // 2
-    img_p = np.pad(img, ((pad, pad), (pad, pad)), mode='reflect')
-    out = np.zeros_like(img, dtype=float)
-    for i in range(out.shape[0]):
-        for j in range(out.shape[1]):
-            window = img_p[i:i+k, j:j+k]
-            out[i, j] = np.sum(window * kernel)
-    return out
+def tanh_projection(x, beta, eta=0.5):
+    num = np.tanh(beta * eta) + np.tanh(beta * (x - eta))
+    den = np.tanh(beta * eta) + np.tanh(beta * (1 - eta))
+    return num / den
 
-def create_smoothed_material_grid_geometry(binary_vector, grid_rows, grid_cols,
-                                           sigma=0.8, kernel_size=5,
-                                           meep_smoothing=1.0):
-    """
-    (取代 decode_binary_vector_to_mdm_geometry)
-    
-    將 0/1 向量轉換為平滑的、基於 MaterialGrid 的 MEEP 幾何體。
-    這會執行高斯模糊以產生 0.0-1.0 之間的連續密度。
-    """
-    # 1. 將 0/1 向量轉換為 2D 浮點網格
+def get_projected_density_matrix(binary_vector, grid_rows, grid_cols, sigma=0.5, kernel_size=5, beta=50, eta=0.5):
     grid_matrix = np.array(binary_vector).astype(float).reshape((grid_rows, grid_cols))
-    
-    # 2. 生成高斯核
     kernel = gaussian_kernel(size=kernel_size, sigma=sigma)
-    
-    # 3. 執行 2D 捲積（高斯模糊）
     try:
         from scipy.signal import convolve2d
-        # 使用 scipy 進行快速捲積
         density = convolve2d(grid_matrix, kernel, mode='same', boundary='symm')
     except Exception:
-        # 回退到 numpy 實現
-        density = convolve2d_same(grid_matrix, kernel)
-        
-    # 4. 將密度限制在 [0.0, 1.0] 範圍內
-    # 這是關鍵步驟，確保不會有 "反轉" (0 變成 1)
-    # 而是 0 變成 0.1 或 0.2 (平滑過渡)
-    density = np.clip(density, 0.0, 1.0)
+        k = kernel.shape[0]
+        pad = k // 2
+        img_p = np.pad(grid_matrix, ((pad, pad), (pad, pad)), mode='reflect')
+        density = np.zeros_like(grid_matrix)
+        for i in range(grid_rows):
+            for j in range(grid_cols):
+                density[i, j] = np.sum(img_p[i:i+k, j:j+k] * kernel)
     
-    # 5. 創建 MEEP MaterialGrid
-    # MEEP 的 MaterialGrid 需要 C-order (row-major) 展平，但權重是 (cols, rows)
-    # 所以我們需要轉置 (density.T)
+    projected_density = tanh_projection(density, beta=beta, eta=eta)
+    projected_density = np.clip(projected_density, 0.0, 1.0)
+    return projected_density
+
+def apply_port_constraints(binary_vector, grid_rows, grid_cols):
+    """
+    輸入端口 Padding = 1
+    輸出端口 Padding = 3 (防止洩漏)
+    """
+    grid_matrix = np.array(binary_vector).reshape((grid_rows, grid_cols))
+    pixel_height = MDM_LC / grid_rows
+    
+    def get_row_range(y_center, wg_width):
+        y_top = y_center + wg_width / 2
+        y_bot = y_center - wg_width / 2
+        row_start = int(np.floor((MDM_LC/2 - y_top) / pixel_height))
+        row_end = int(np.ceil((MDM_LC/2 - y_bot) / pixel_height))
+        return max(0, row_start), min(grid_rows, row_end)
+
+    input_pad = 1      
+    output_pad = 3     
+
+    # 1. 輸入端口 (Input Port)
+    r_in_start, r_in_end = get_row_range(0, MULTIMODE_WG_WIDTH)
+    grid_matrix[r_in_start:r_in_end, 0] = 1.0
+    if r_in_start - input_pad >= 0:
+        grid_matrix[r_in_start-input_pad:r_in_start, 0] = 0.0
+    if r_in_end + input_pad <= grid_rows:
+        grid_matrix[r_in_end:r_in_end+input_pad, 0] = 0.0
+    
+    # 2. 輸出端口 1 (Output Port 1)
+    r_out1_start, r_out1_end = get_row_range(output_port1_y, SINGLEMODE_WG_WIDTH)
+    grid_matrix[r_out1_start:r_out1_end, -1] = 1.0
+    if r_out1_start - output_pad >= 0:
+        grid_matrix[r_out1_start-output_pad:r_out1_start, -1] = 0.0
+    if r_out1_end + output_pad <= grid_rows:
+        grid_matrix[r_out1_end:r_out1_end+output_pad, -1] = 0.0
+    
+    # 3. 輸出端口 2 (Output Port 2)
+    r_out2_start, r_out2_end = get_row_range(output_port2_y, SINGLEMODE_WG_WIDTH)
+    grid_matrix[r_out2_start:r_out2_end, -1] = 1.0
+    if r_out2_start - output_pad >= 0:
+        grid_matrix[r_out2_start-output_pad:r_out2_start, -1] = 0.0
+    if r_out2_end + output_pad <= grid_rows:
+        grid_matrix[r_out2_end:r_out2_end+output_pad, -1] = 0.0
+
+    return grid_matrix.flatten()
+
+def create_projected_geometry(binary_vector, grid_rows, grid_cols, beta=50):
+    constrained_vector = apply_port_constraints(binary_vector, grid_rows, grid_cols)
+    density = get_projected_density_matrix(constrained_vector, grid_rows, grid_cols, beta=beta)
     weights = density.flatten()
-    
-    material_grid = mp.MaterialGrid(
-        mp.Vector3(grid_cols, grid_rows),
-        SIO2_MEDIUM,
-        SI_MEDIUM,
-        weights=weights
-    )
-    
-    # 6. (可選) 添加 MEEP 內部的次像素平滑
-    material_grid.smoothing_radius = meep_smoothing
-
-    # 7. 創建包含 MaterialGrid 的 MEEP Block
-    design_block = mp.Block(
-        size=mp.Vector3(MDM_LC, MDM_LC, mp.inf),
-        center=mp.Vector3(),
-        material=material_grid
-    )
-    
+    material_grid = mp.MaterialGrid(mp.Vector3(grid_cols, grid_rows), SIO2_MEDIUM, SI_MEDIUM, weights=weights)
+    material_grid.smoothing_radius = 1.0 
+    design_block = mp.Block(size=mp.Vector3(MDM_LC, MDM_LC, mp.inf), center=mp.Vector3(), material=material_grid)
     return [design_block]
-
 
 def generate_smooth_random_config(rows, cols, threshold=0.5):
     small_r, small_c = max(1, rows // 2), max(1, cols // 2)
@@ -191,52 +173,12 @@ def generate_smooth_random_config(rows, cols, threshold=0.5):
     binary = (smooth_noise > threshold).astype(int).flatten()
     return binary
 
-
-# ==============================================================================
-# SECTION 2: MEEP SIMULATION & MDM OPTIMIZATION TARGET (REVISED)
-# ==============================================================================
-
-# --- Global MEEP Parameters ---
-RESOLUTION = 40
-DPML = 1.0
-PADDING = 1.0
-MDM_LC = 6.5
-WG_LENGTH = 0.5
-SX = 2 * DPML + MDM_LC + 2 * WG_LENGTH
-SY = 2 * DPML + MDM_LC
-CELL = mp.Vector3(SX, SY, 0)
-
-N_SIO2 = 1.44
-N_SI = 3.48
-SIO2_MEDIUM = mp.Medium(index=N_SIO2)
-SI_MEDIUM = mp.Medium(index=N_SI)
-
-MULTIMODE_WG_WIDTH = 1.8
-SINGLEMODE_WG_WIDTH = 0.5
-wl_cen = 1.55  # 中心波長 (微米)
-FCEN = 1 / wl_cen  # 中心頻率 (1/μm)
-DF = 0.1 * FCEN
-NFREQ = 1
-
-output_port1_y = 1.5
-output_port2_y = -1.5
-
-# (舊的 decode_binary_vector_to_mdm_geometry 函數已被移除)
-
+# -----------------------------------------------------------------------------
+# Notebook code cell 8
+# -----------------------------------------------------------------------------
 def evaluate_mdm_fom(binary_vector, grid_rows, grid_cols):
-    
     mp.Simulation(cell_size=CELL, resolution=1, boundary_layers=[]).reset_meep()
-    
-    # --- Geometry Setup (CHANGED) ---
-    # 現在使用新的平滑幾何函數
-    mdm_structure = create_smoothed_material_grid_geometry(
-        binary_vector, 
-        grid_rows, 
-        grid_cols,
-        sigma=0.5,      # 高斯核的標準差 (可調整)
-        kernel_size=5,  # 高斯核的大小 (可調整)
-        meep_smoothing=1.0 # MEEP 內部的平滑半徑
-    )
+    mdm_structure = create_projected_geometry(binary_vector, grid_rows, grid_cols, beta=50)
     
     input_wg_center_x = -MDM_LC / 2 - (WG_LENGTH + DPML) / 2
     output_wg_center_x = MDM_LC / 2 + (WG_LENGTH + DPML) / 2
@@ -247,132 +189,58 @@ def evaluate_mdm_fom(binary_vector, grid_rows, grid_cols):
         mp.Block(size=mp.Vector3(WG_LENGTH + DPML, SINGLEMODE_WG_WIDTH, mp.inf), center=mp.Vector3(output_wg_center_x, output_port2_y), material=SI_MEDIUM),
     ]
     full_geometry = fixed_geometry + mdm_structure
-
-    # --- EigenModeSource Setup ---
     src_center = mp.Vector3(-SX / 2 + DPML + 0.01, 0)
     src_size = mp.Vector3(0, MULTIMODE_WG_WIDTH) 
 
-    mode_definitions = {
-        'TE0': {'band_num': 1, 'parity': mp.EVEN_Y},
-        'TE1': {'band_num': 2, 'parity': mp.ODD_Y}
-    }
-
+    mode_definitions = {'TE1': {'band_num': 2, 'parity': mp.ODD_Y}, 'TE0': {'band_num': 1, 'parity': mp.EVEN_Y}}
     transmission_results = {}
+    monitor_size = mp.Vector3(0, 4 * SINGLEMODE_WG_WIDTH)
 
     for mode_name, props in mode_definitions.items():
-        sources = [
-            mp.EigenModeSource(
-                src=mp.GaussianSource(FCEN, fwidth=DF),
-                center=src_center, size=src_size, direction=mp.X,
-                eig_band=props['band_num'], eig_parity=props['parity']
-            )
-        ]
-
-        sim = mp.Simulation(
-            cell_size=CELL, boundary_layers=[mp.PML(DPML)], geometry=full_geometry,
-            sources=sources, resolution=RESOLUTION, default_material=SIO2_MEDIUM
-        )
-        # --- Flux Monitors ---
-        # 1. Normalization Flux (measures injected power)
-        norm_flux = sim.add_mode_monitor(FCEN, DF, NFREQ, mp.ModeRegion(center=mp.Vector3(src_center.x + 0.2, 0), size=src_size))
-        # 2. Output Port Flux Monitors
-        monitor_x_pos = MDM_LC / 2 + WG_LENGTH / 3
-        flux_p1 = sim.add_mode_monitor(
-            FCEN, DF, NFREQ,
-            mp.ModeRegion(center=mp.Vector3(monitor_x_pos, output_port1_y), size=mp.Vector3(0, 2 * SINGLEMODE_WG_WIDTH)),
-            eig_band=1,
-            eig_parity=mp.EVEN_Y
-        )
-        flux_p2 = sim.add_mode_monitor(
-            FCEN, DF, NFREQ,
-            mp.ModeRegion(center=mp.Vector3(monitor_x_pos, output_port2_y), size=mp.Vector3(0, 2 * SINGLEMODE_WG_WIDTH)),
-            eig_band=1,
-            eig_parity=mp.EVEN_Y
-        )
-
-        sim.run(until_after_sources=mp.stop_when_fields_decayed(50, mp.Ez, mp.Vector3(monitor_x_pos, 0), 1e-4))
-
-        fcen_idx = np.argmin(np.abs(np.array(mp.get_flux_freqs(norm_flux)) - FCEN))
-
-        # 關鍵：所有 band number 都要根據 mode_name 動態選擇 props['band_num']
-        band = props['band_num']
-        parity = props['parity']
-        input_flux_val = sim.get_eigenmode_coefficients(norm_flux, [band], eig_parity=parity)
-        input_power = np.abs(input_flux_val.alpha[0, fcen_idx, 0])**2 + 1e-12 # 增加
+        sources = [mp.EigenModeSource(src=mp.GaussianSource(FCEN, fwidth=DF), center=src_center, size=src_size, direction=mp.X, eig_band=props['band_num'], eig_parity=props['parity'])]
+        sim = mp.Simulation(cell_size=CELL, boundary_layers=[mp.PML(DPML)], geometry=full_geometry, sources=sources, resolution=RESOLUTION, default_material=SIO2_MEDIUM)
         
-        p1_flux = sim.get_eigenmode_coefficients(flux_p1, [1])
-        T1 = np.abs(p1_flux.alpha[0, fcen_idx, 0])**2 / input_power
+        norm_flux = sim.add_mode_monitor(FCEN, DF, NFREQ, mp.ModeRegion(center=mp.Vector3(src_center.x + 0.2, 0), size=src_size))
+        monitor_x_pos = MDM_LC / 2 + WG_LENGTH / 3
+        flux_p1 = sim.add_mode_monitor(FCEN, DF, NFREQ, mp.ModeRegion(center=mp.Vector3(monitor_x_pos, output_port1_y), size=monitor_size), eig_band=1)
+        flux_p2 = sim.add_mode_monitor(FCEN, DF, NFREQ, mp.ModeRegion(center=mp.Vector3(monitor_x_pos, output_port2_y), size=monitor_size), eig_band=1)
+        
+        sim.run(until_after_sources=mp.stop_when_fields_decayed(75, mp.Ez, mp.Vector3(monitor_x_pos, 0), 1e-6))
+        
+        frequencies = np.asarray(mp.get_flux_freqs(norm_flux))
+        center_frequency_index = int(np.argmin(np.abs(frequencies - FCEN)))
 
-        p2_flux = sim.get_eigenmode_coefficients(flux_p2, [1])
-        T2 = np.abs(p2_flux.alpha[0, fcen_idx, 0])**2 / input_power
-
-        transmission_results[mode_name] = {
-            'port1': T1,
-            'port2': T2
-        }
+        input_coeff = sim.get_eigenmode_coefficients(
+            norm_flux, [props['band_num']], eig_parity=props['parity']
+        ).alpha[0, center_frequency_index, 0]
+        input_power = np.abs(input_coeff)**2 + 1e-12
+        p1_coeff = sim.get_eigenmode_coefficients(flux_p1, [1]).alpha[0, center_frequency_index, 0]
+        p2_coeff = sim.get_eigenmode_coefficients(flux_p2, [1]).alpha[0, center_frequency_index, 0]
+        p1_power = np.abs(p1_coeff)**2
+        p2_power = np.abs(p2_coeff)**2
+        
+        transmission_results[mode_name] = {'port1': p1_power/input_power, 'port2': p2_power/input_power}
         sim.reset_meep()
 
-    # --- Calculate Figure of Merit (FoM) ---
     T_01 = transmission_results['TE0']['port1']
     T_02 = transmission_results['TE0']['port2']
     T_11 = transmission_results['TE1']['port1']
     T_12 = transmission_results['TE1']['port2']
     
-    w = 0.2
-    epsilon = 1e-9 # 避免 log(0)
-    # FoM 目標: 最大化 T_01 和 T_12 (目標通道)，最小化 T_02 和 T_11 (串擾通道)
-    fom = (np.log10(T_01 + epsilon) + np.log10(T_12 + epsilon)) - w * (np.log10(T_02 + epsilon) + np.log10(T_11 + epsilon))
-    
-    # 我們要最小化 (-fom)
+    score_te0 = T_01 * (1.0 - T_02)
+    score_te1 = T_12 * (1.0 - T_11)
+    fom = score_te0 * score_te1
     return -fom
 
-# ==============================================================================
-# SECTION 3: VISUALIZATION (MASTER ONLY)
-# ==============================================================================
-
-def visualize_mdm_grid(grid_matrix, output_folder, filename="optimized_mdm_structure.png"):
-    """
-    (此函數不變)
-    注意：此函數顯示的是 *原始的 0/1 網格*，而不是平滑後的密度。
-    這有助於了解 SA 求解器產生的 "基礎" 結構。
-    """
-    # This function is only called by the master (rank 0)
-    rows, cols = grid_matrix.shape
-    cmap = mcolors.ListedColormap(['#FFFFFF', '#00008B']) # 白: SiO2, 深藍: Si
-    bounds = [-0.5, 0.5, 1.5]
-    norm = mcolors.BoundaryNorm(bounds, cmap.N)
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(grid_matrix, cmap=cmap, norm=norm, interpolation='none')
-    ax.set_xticks(np.arange(-.5, cols, 1), minor=True)
-    ax.set_yticks(np.arange(-.5, rows, 1), minor=True)
-    ax.grid(which="minor", color="k", linestyle='-', linewidth=0.5)
-    ax.tick_params(which="minor", size=0)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_title(f"Optimized MDM Structure ({rows}x{cols})")
-    patches = [plt.Rectangle((0,0),1,1,fc=color) for color in ['#FFFFFF', '#00008B']]
-    labels = ["SiO2 (0)", "Si (1)"]
-    ax.legend(patches, labels, loc='upper right', bbox_to_anchor=(1.25, 1))
-    plt.tight_layout()
-    filepath = os.path.join(output_folder, filename)
-    plt.savefig(filepath)
-    print(f"Structure visualization saved to {filepath}")
-    plt.close(fig)
-
-def visualize_full_structure(binary_vector, grid_rows, grid_cols, output_folder, filename="optimized_full_structure.png"):
-    """
-    (CHANGED)
-    此函數現在將顯示 *平滑後* 的 MEEP 模擬結構。
-    """
-    # This function is only called by the master (rank 0)
-    print(f"--- Visualizing full simulation structure (smoothed) ---")
-    mp.Simulation(cell_size=CELL, resolution=1, boundary_layers=[]).reset_meep()
+# -----------------------------------------------------------------------------
+# Notebook code cell 10
+# -----------------------------------------------------------------------------
+def perform_detailed_final_analysis(best_config, grid_rows, grid_cols, output_folder):
+    print(f"\n>>> Starting Final Detailed MEEP Analysis & Plotting (v7.9) <<<")
     
-    # (CHANGED)
-    mdm_structure = create_smoothed_material_grid_geometry(
-        binary_vector, grid_rows, grid_cols
-    )
+    mdm_structure = create_projected_geometry(best_config, grid_rows, grid_cols, beta=50)
     
+    # ... (幾何設置同上，省略部分重複代碼以節省空間，實際運行請完整貼上) ...
     input_wg_center_x = -MDM_LC / 2 - (WG_LENGTH + DPML) / 2
     output_wg_center_x = MDM_LC / 2 + (WG_LENGTH + DPML) / 2
     fixed_geometry = [
@@ -381,424 +249,460 @@ def visualize_full_structure(binary_vector, grid_rows, grid_cols, output_folder,
         mp.Block(size=mp.Vector3(WG_LENGTH + DPML, SINGLEMODE_WG_WIDTH, mp.inf), center=mp.Vector3(output_wg_center_x, output_port2_y), material=SI_MEDIUM),
     ]
     full_geometry = fixed_geometry + mdm_structure
-    sim = mp.Simulation(
-        cell_size=CELL, boundary_layers=[mp.PML(DPML)], geometry=full_geometry,
-        resolution=RESOLUTION, default_material=SIO2_MEDIUM
-    )
-    fig, ax = plt.subplots(figsize=(16, 8))
-    
-    # sim.plot2D 將自動顯示 MaterialGrid 的平滑介電常數
-    sim.plot2D(ax=ax, output_plane=mp.Volume(center=mp.Vector3(), size=mp.Vector3(SX, SY, 0)))
-    
-    ax.set_title("Full Optimized MDM Structure with Waveguides (Smoothed MaterialGrid)")
-    plt.tight_layout()
-    filepath = os.path.join(output_folder, filename)
-    plt.savefig(filepath)
-    print(f"Full structure visualization saved to {filepath}")
-    plt.close(fig)
-
-def analyze_and_visualize_final_design(binary_vector, grid_rows, grid_cols, output_folder):
-    """
-    (CHANGED)
-    最終分析也將使用平滑後的結構。
-    """
-    
-    print(f"\n{'='*20} Final Analysis and Visualization {'='*20}")
-
-    mp.Simulation(cell_size=CELL, resolution=1, boundary_layers=[]).reset_meep()
-    
-    # (CHANGED)
-    mdm_structure = create_smoothed_material_grid_geometry(
-        binary_vector, grid_rows, grid_cols
-    )
-    
-    input_wg_center_x = -MDM_LC / 2 - (WG_LENGTH + DPML) / 2
-    output_wg_center_x = MDM_LC / 2 + (WG_LENGTH + DPML) / 2
-    fixed_geometry = [
-        mp.Block(size=mp.Vector3(WG_LENGTH + DPML, MULTIMODE_WG_WIDTH, mp.inf), center=mp.Vector3(input_wg_center_x, 0), material=SI_MEDIUM),
-        mp.Block(size=mp.Vector3(WG_LENGTH + DPML, SINGLEMODE_WG_WIDTH, mp.inf), center=mp.Vector3(output_wg_center_x, output_port1_y), material=SI_MEDIUM),
-        mp.Block(size=mp.Vector3(WG_LENGTH + DPML, SINGLEMODE_WG_WIDTH, mp.inf), center=mp.Vector3(output_wg_center_x, output_port2_y), material=SI_MEDIUM),
-    ]
-    full_geometry = fixed_geometry + mdm_structure
-
     src_center = mp.Vector3(-SX / 2 + DPML + 0.01, 0)
     src_size = mp.Vector3(0, MULTIMODE_WG_WIDTH)
-    mode_definitions = {
-        'TE0': {'band_num': 1, 'parity': mp.EVEN_Y},
-        'TE1': {'band_num': 2, 'parity': mp.ODD_Y}
-    }
+    mode_definitions = {'TE1': {'band_num': 2, 'parity': mp.ODD_Y}, 'TE0': {'band_num': 1, 'parity': mp.EVEN_Y}}
     
-    n_si = N_SI
-    n_sio2 = N_SIO2
-    
-    print(f"\n--- Task 1: Calculating Performance Metrics using GaussianSource ---")
-    field_data = {}
-    transmission_results = {}
-    
-    for mode_name, props in mode_definitions.items():
-        print(f"  Running simulation for {mode_name} transmission...")
-        sources = [
-            mp.EigenModeSource(
-                src=mp.GaussianSource(FCEN, fwidth=DF),
-                center=src_center, size=src_size, direction=mp.X,
-                eig_band=props['band_num'], eig_parity=props['parity']
-            )
-        ]
+    detailed_results = {}
+    monitor_size = mp.Vector3(0, 4 * SINGLEMODE_WG_WIDTH)
+    intensity_fields = {}
+    eps_data_cache = None
 
-        sim = mp.Simulation(
-            cell_size=CELL, boundary_layers=[mp.PML(DPML)], geometry=full_geometry,
-            sources=sources, resolution=RESOLUTION, default_material=SIO2_MEDIUM
-        )
-        # Monitor setup
+    # 執行模擬並捕捉場型
+    for mode_name, props in mode_definitions.items():
+        mp.Simulation(cell_size=CELL, resolution=RESOLUTION, boundary_layers=[]).reset_meep()
+        sources = [mp.EigenModeSource(src=mp.GaussianSource(FCEN, fwidth=DF), center=src_center, size=src_size, direction=mp.X, eig_band=props['band_num'], eig_parity=props['parity'])]
+        sim = mp.Simulation(cell_size=CELL, boundary_layers=[mp.PML(DPML)], geometry=full_geometry, sources=sources, resolution=RESOLUTION, default_material=SIO2_MEDIUM)
+        
         norm_flux = sim.add_mode_monitor(FCEN, DF, NFREQ, mp.ModeRegion(center=mp.Vector3(src_center.x + 0.2, 0), size=src_size))
         monitor_x_pos = MDM_LC / 2 + WG_LENGTH / 3
-        flux_p1 = sim.add_mode_monitor(
-            FCEN, DF, NFREQ,
-            mp.ModeRegion(center=mp.Vector3(monitor_x_pos, output_port1_y), size=mp.Vector3(0, 2 * SINGLEMODE_WG_WIDTH)),
-            eig_band=1,
-            eig_parity=mp.EVEN_Y
-        )
-        flux_p2 = sim.add_mode_monitor(
-            FCEN, DF, NFREQ,
-            mp.ModeRegion(center=mp.Vector3(monitor_x_pos, output_port2_y), size=mp.Vector3(0, 2 * SINGLEMODE_WG_WIDTH)),
-            eig_band=1,
-            eig_parity=mp.EVEN_Y
-        )
-
-        dft_monitor = sim.add_dft_fields([mp.Ez], FCEN, 0, 1, where=mp.Volume(center=mp.Vector3(), size=mp.Vector3(SX, SY)))
-        sim.run(until_after_sources=mp.stop_when_fields_decayed(50, mp.Ez, mp.Vector3(monitor_x_pos, 0), 1e-4))
-
-        fcen_idx = np.argmin(np.abs(np.array(mp.get_flux_freqs(norm_flux)) - FCEN))
-        band = props['band_num']
-        parity = props['parity']
-        input_flux_val = sim.get_eigenmode_coefficients(norm_flux, [band], eig_parity=parity)
-        input_power = np.abs(input_flux_val.alpha[0, fcen_idx, 0])**2 + 1e-12
-
-        p1_flux = sim.get_eigenmode_coefficients(flux_p1, [1])
-        T1 = np.abs(p1_flux.alpha[0, fcen_idx, 0])**2 / input_power
-
-        p2_flux = sim.get_eigenmode_coefficients(flux_p2, [1])
-        T2 = np.abs(p2_flux.alpha[0, fcen_idx, 0])**2 / input_power
-
-
+        flux_p1 = sim.add_mode_monitor(FCEN, DF, NFREQ, mp.ModeRegion(center=mp.Vector3(monitor_x_pos, output_port1_y), size=monitor_size), eig_band=1)
+        flux_p2 = sim.add_mode_monitor(FCEN, DF, NFREQ, mp.ModeRegion(center=mp.Vector3(monitor_x_pos, output_port2_y), size=monitor_size), eig_band=1)
+        
+        dft_monitor = sim.add_dft_fields([mp.Ez], FCEN, FCEN, 1, center=mp.Vector3(), size=mp.Vector3(SX, SY))
+        
+        sim.run(until_after_sources=mp.stop_when_fields_decayed(75, mp.Ez, mp.Vector3(monitor_x_pos, 0), 1e-4))
+        
+        ez_dft_data = sim.get_dft_array(dft_monitor, mp.Ez, 0)
         eps_data = sim.get_epsilon()
-        ez_data = sim.get_dft_array(dft_monitor, mp.Ez, 0)
-        x, y, _, _ = sim.get_array_metadata(dft_cell=dft_monitor)
-        field_data[mode_name] = {
-            'ez_data': ez_data,
-            'eps_data': eps_data,
-            'x_data': x,
-            'y_data': y
+        if eps_data_cache is None: eps_data_cache = eps_data
+        
+        intensity = np.abs(ez_dft_data)**2
+        intensity_fields[mode_name] = intensity
+
+        # 儲存單獨的場圖 (保持原始，不翻轉)
+        x = np.linspace(-SX/2, SX/2, intensity.shape[0])
+        y = np.linspace(-SY/2, SY/2, intensity.shape[1])
+        fig, ax = plt.subplots(figsize=(10, 6))
+        im = ax.imshow(np.rot90(intensity), extent=[x.min(), x.max(), y.min(), y.max()], cmap='jet')
+        ax.contour(np.rot90(eps_data), extent=[x.min(), x.max(), y.min(), y.max()], levels=[(N_SI**2+N_SIO2**2)/2], colors='black', alpha=0.3, linewidths=1)
+        fig.colorbar(im, ax=ax, label='Intensity |Ez|^2')
+        ax.set_title(f"Final Intensity Profile: {mode_name} Input")
+        plt.savefig(os.path.join(output_folder, f"final_analysis_{mode_name}_intensity.png"), dpi=150)
+        plt.close(fig)
+        
+        # 計算傳輸率數據... (省略數值計算部分)
+        frequencies = np.asarray(mp.get_flux_freqs(norm_flux))
+        center_frequency_index = int(np.argmin(np.abs(frequencies - FCEN)))
+        res_input = sim.get_eigenmode_coefficients(
+            norm_flux, [props['band_num']], eig_parity=props['parity']
+        )
+        input_power = np.abs(res_input.alpha[0, center_frequency_index, 0])**2 + 1e-12
+        reflectivity = np.abs(res_input.alpha[0, center_frequency_index, 1])**2 / input_power
+        out1_coeff = sim.get_eigenmode_coefficients(flux_p1, [1]).alpha[0, center_frequency_index, 0]
+        out2_coeff = sim.get_eigenmode_coefficients(flux_p2, [1]).alpha[0, center_frequency_index, 0]
+        t1 = np.abs(out1_coeff)**2 / input_power
+        t2 = np.abs(out2_coeff)**2 / input_power
+        
+        detailed_results[mode_name] = {
+            "Port1_Linear": float(t1), "Port2_Linear": float(t2), "Reflection_Linear": float(reflectivity)
         }
 
-        # 保存歸一化後的傳輸率
-        transmission_results[mode_name] = {
-            'port1': T1,
-            'port2': T2
-        }
-        sim.reset_meep()
-
-    # --- 性能指標計算與打印 ---
-    T_01 = transmission_results['TE0']['port1'] # TE0 -> Port 1 (目標)
-    T_02 = transmission_results['TE0']['port2'] # TE0 -> Port 2 (串擾)
-    T_11 = transmission_results['TE1']['port1'] # TE1 -> Port 1 (串擾)
-    T_12 = transmission_results['TE1']['port2'] # TE1 -> Port 2 (目標)
+    # === v7.9 重點修改：繪製疊加圖 (TE1 Flip) ===
+    print("  Generating Mode Overlap Plot (with TE1 Flip)...")
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    epsilon_db = 1e-9
-    print(f"\n--- Final Performance Metrics (at {1/FCEN:.3f} um) ---")
-    print(f"  TE0 -> Port 1 (T_01): {T_01:.4f} ({10*np.log10(T_01 + epsilon_db):.2f} dB)")
-    print(f"  TE0 -> Port 2 (T_02): {T_02:.4f} ({10*np.log10(T_02 + epsilon_db):.2f} dB)")
-    print(f"  TE1 -> Port 1 (T_11): {T_11:.4f} ({10*np.log10(T_11 + epsilon_db):.2f} dB)")
-    print(f"  TE1 -> Port 2 (T_12): {T_12:.4f} ({10*np.log10(T_12 + epsilon_db):.2f} dB)")
+    # 1. TE0 底圖：Jet Colormap (不翻轉)
+    te0_intensity = np.rot90(intensity_fields['TE0'])
+    im_base = ax.imshow(te0_intensity, extent=[x.min(), x.max(), y.min(), y.max()], cmap='jet', origin='upper')
     
-    # 計算串擾 (Crosstalk)
-    crosstalk_0 = T_02 / (T_01 + epsilon_db) # TE0的串擾
-    crosstalk_1 = T_11 / (T_12 + epsilon_db) # TE1的串擾
-    print(f"\n  Crosstalk for TE0 input (T_02/T_01): {10*np.log10(crosstalk_0 + epsilon_db):.2f} dB")
-    print(f"  Crosstalk for TE1 input (T_11/T_12): {10*np.log10(crosstalk_1 + epsilon_db):.2f} dB")
+    # 2. TE1 輪廓：Red Contours (加入 np.flipud 進行上下翻轉)
+    te1_intensity = np.rot90(intensity_fields['TE1'])
+    te1_intensity_flipped = np.flipud(te1_intensity) # <--- v7.9 [FIX] 強制上下翻轉
     
-    # 計算 FoM
-    w = 0.2
-    epsilon_fom = 1e-9
-    fom = (np.log10(T_01 + epsilon_fom) + np.log10(T_12 + epsilon_fom)) - w * (np.log10(T_02 + epsilon_fom) + np.log10(T_11 + epsilon_fom))
-    print(f"\n  Recalculated Final FoM: {-fom:.4f}")
+    ax.contour(te1_intensity_flipped, extent=[x.min(), x.max(), y.min(), y.max()], 
+               levels=np.linspace(te1_intensity.max()*0.2, te1_intensity.max(), 5), 
+               colors='red', linewidths=1.5, alpha=0.9)
     
-    for mode_name in field_data.keys():
-        print(f"  Plotting intensity for {mode_name} input...")
-        
-        data = field_data[mode_name]
-        ez_data_mode = data['ez_data']
-        eps_data_mode = data['eps_data']
-        x = data['x_data']
-        y = data['y_data']
+    # 3. 結構輪廓 (不翻轉)
+    ax.contour(np.rot90(eps_data_cache), extent=[x.min(), x.max(), y.min(), y.max()], 
+               levels=[(N_SI**2+N_SIO2**2)/2], colors='black', linewidths=1.0, alpha=0.5)
+    
+    fig.colorbar(im_base, ax=ax, label='TE0 Intensity |Ez|^2')
+    ax.set_title("Mode Overlap Analysis: TE0 (Jet) vs TE1 Flipped (Red)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_folder, "final_analysis_overlap.png"), dpi=300)
+    plt.close(fig)
 
-        fig, ax = plt.subplots(figsize=(16, 6), dpi=100)
-        im = ax.imshow(np.abs(ez_data_mode.T)**2,
-                       extent=[x.min(), x.max(), y.min(), y.max()],
-                       cmap='jet',
-                       origin='lower',
-                       interpolation='spline36',
-                       vmax=np.max(np.abs(ez_data_mode)**2)*0.8)
-        
-        # 繪製平滑的結構輪廓
-        ax.contour(x, y, eps_data_mode.T, levels=[(n_si**2 + n_sio2**2)/2], colors='black', linewidths=0.8)
-        
-        ax.set_title(f"MDM Intensity ($|E_z|^2$) for {mode_name}")
-        ax.set_xlabel("x (μm)")
-        ax.set_ylabel("y (μm)")
-        fig.colorbar(im, ax=ax, label="Intensity")
-        plot_filename = f"optimized_{mode_name}_intensity_field.png"
-        filepath = os.path.join(output_folder, plot_filename)
-        plt.savefig(filepath)
-        print(f"Saved {mode_name} field visualization to {filepath}")
-        plt.close(fig)
+    return detailed_results
 
-        # --- Real field map ---
-        fig, ax = plt.subplots(figsize=(16, 6), dpi=100)
-        im = ax.imshow(np.real(ez_data_mode).T,
-                       extent=[x.min(), x.max(), y.min(), y.max()],
-                       cmap='RdBu',
-                       origin='lower',
-                       interpolation='spline36')
-        
-        ax.contour(x, y, eps_data_mode.T, levels=[(n_si**2 + n_sio2**2)/2], colors='black', linewidths=0.8)
-        
-        ax.set_title(f"MDM Real Field ($E_z$) for {mode_name} Mode at {wl_cen:.2f} μm")
-        ax.set_xlabel("x (μm)")
-        ax.set_ylabel("y (μm)")
-        fig.colorbar(im, ax=ax, label="Real($E_z$)")
-        plot_filename = f"optimized_{mode_name}_real_field.png"
-        filepath = os.path.join(output_folder, plot_filename)
-        plt.savefig(filepath)
-        print(f"Saved {mode_name} field visualization to {filepath}")
-        plt.close(fig)
-    print(f"\n{'='*53}")
+# 輔助繪圖函數
+def plot_optimization_trajectory(foms, split_index, output_folder):
+    plt.figure(figsize=(12, 6))
+    plt.plot(foms, label='FOM Trajectory')
+    plt.axvline(x=split_index, color='r', linestyle='--', label='Start of Optimization')
+    plt.xlabel('Iteration')
+    plt.ylabel('FOM')
+    plt.legend()
+    plt.savefig(os.path.join(output_folder, "fom_trajectory.png"))
+    plt.close()
 
+def plot_chain_break_history(history, output_folder):
+    # 簡化的繪圖邏輯
+    pass 
 
-# ==============================================================================
-# SECTION 4: WORKER PROCESS LOGIC
-# ==============================================================================
+def generate_gds(binary_vector, grid_rows, grid_cols, output_folder):
+    pass
+
+# -----------------------------------------------------------------------------
+# Notebook code cell 12
+# -----------------------------------------------------------------------------
+def train_fm_model(model, X_train, Y_train, num_epoch, learning_rate, batch_size=32):
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=False)
+    criterion = nn.MSELoss()
+    
+    device = next(model.parameters()).device
+    X_tensor = torch.from_numpy(X_train).float().to(device)
+    
+    y_mean = Y_train.mean()
+    y_std = Y_train.std() + 1e-8
+    Y_scaled = (Y_train - y_mean) / y_std
+    Y_tensor = torch.from_numpy(Y_scaled).float().view(-1, 1).to(device)
+    
+    dataset = TensorDataset(X_tensor, Y_tensor)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    loss_history = []
+    
+    start_time = time.time()
+    model.train() 
+    
+    for epoch in range(num_epoch):
+        epoch_loss = 0.0
+        for batch_x, batch_y in dataloader:
+            optimizer.zero_grad()
+            outputs = model(batch_x)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item() * batch_x.size(0)
+            
+        avg_loss = epoch_loss / len(dataset)
+        loss_history.append(avg_loss)
+        scheduler.step(avg_loss)
+        
+    end_time = time.time()
+    return model, loss_history, end_time - start_time, (y_mean, y_std)
 
 def worker_node():
-    """Main loop for worker nodes."""
     grid_dims = comm.bcast(None, root=0)
-    grid_rows = grid_dims['rows']
-    grid_cols = grid_dims['cols']
-
-    # Suppress MEEP output from worker nodes
     mp.verbosity(0)
-
     while True:
         status = MPI.Status()
         data = comm.recv(source=0, tag=MPI.ANY_TAG, status=status)
-        tag = status.Get_tag()
-
-        if tag == STOP_TAG:
-            break
-        
-        task_index, binary_vector = data
-        
-        # (CHANGED)
-        # worker_node 現在不需要知道 sigma 或 kernel_size。
-        # 這些參數被硬編碼在 evaluate_mdm_fom 中以保持一致性。
-        fom = evaluate_mdm_fom(binary_vector, grid_rows, grid_cols)
-        
-        comm.send((task_index, fom), dest=0, tag=WORK_TAG)
-
-# ==============================================================================
-# SECTION 5: MASTER PROCESS LOGIC & MAIN WORKFLOW
-# ==============================================================================
-
-def master_node():
-    """Main workflow executed by the master node (rank 0)."""
-    start_total_time = time.time()
-    print("--- Step 1: Defining Parameters for Iterative FMQA for MDM Design ---")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"--- Using device for PyTorch training: {device} ---")
-
-    # --- Consolidated all parameters in one place at the top ---
-    GRID_ROWS = 8
-    GRID_COLS = 8
-    INIT_DATASET_SIZE = 1000
-    ITERATIONS = 100
-    NUM_EPOCHS = 1000
-    K_FACTOR = GRID_COLS * GRID_ROWS
-    LEARNING_RATE = 1.0e-3
-    NUM_READS = 500
-    ADDING_NUM = 30
-    NUM_VARIABLES = GRID_ROWS * GRID_COLS
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_folder = f"results_{GRID_ROWS}x{GRID_COLS}_res{RESOLUTION}_smoothed_{timestamp}"
-    os.makedirs(output_folder, exist_ok=True)
-    print(f"--- Results will be saved in: '{output_folder}/' ---")
-    
-    BQM_ARCHIVE_DIR = os.path.join(output_folder, "BQM_archive")
-    os.makedirs(BQM_ARCHIVE_DIR, exist_ok=True)
-    print(f"--- BQM matrices will be saved in '{BQM_ARCHIVE_DIR}/' ---")
-
-    # --- Broadcast Grid Dimensions ---
-    grid_dims = {'rows': GRID_ROWS, 'cols': GRID_COLS}
-    comm.bcast(grid_dims, root=0)
-
-    # --- Generate Initial Dataset in Parallel ---
-    print(f"\n--- Step 3: Generating Initial Dataset of {INIT_DATASET_SIZE} Samples (in parallel) ---")
-    initial_configs = np.array([
-        generate_smooth_random_config(GRID_ROWS, GRID_COLS)
-        for _ in range(INIT_DATASET_SIZE)
-    ])
-    fom_cache = {}
-    tasks = [initial_configs[i] for i in range(INIT_DATASET_SIZE)]
-    results = parallel_evaluate(tasks, fom_cache, GRID_ROWS, GRID_COLS)
-    configs = initial_configs
-    foms = np.array(results)
-    for i in range(len(configs)):
-        fom_cache[tuple(configs[i])] = foms[i]
-    print("--- Initial Dataset Generation Complete ---")
-    
-    best_fom_so_far = np.min(foms)
-    best_config_so_far = configs[np.argmin(foms)]
-    print(f"\nInitial best FoM: {-best_fom_so_far:.4f}")
-
-    # --- Start Iterative Optimization Loop ---
-    for i in range(ITERATIONS):
-        print(f"\n{'='*20} FMQA Iteration {i+1}/{ITERATIONS} {'='*20}")
-        
-        model = FactorizationMachine(input_size=NUM_VARIABLES, factorization_size=K_FACTOR).to(device)
-        model = train_fm_model(model, configs, foms, NUM_EPOCHS, LEARNING_RATE)
-
-        # ... (BQM creation and solving logic remains the same) ...
-        print("\n--- Creating BQM from trained FM model ---")
-        bias, h, Q_matrix = model.get_bhQ()
-        Q_dict = {}
-        for r in range(Q_matrix.shape[0]):
-            for c in range(r + 1, Q_matrix.shape[1]):
-                if Q_matrix[r, c] != 0: Q_dict[(r, c)] = Q_matrix[r, c]
-        bqm = dimod.BinaryQuadraticModel(h, Q_dict, bias, dimod.BINARY)
-        bqm_filename = os.path.join(BQM_ARCHIVE_DIR, f"bqm_iter_{i+1}.npz")
-        np.savez(bqm_filename, bias=np.array([bias]), h=h, Q_upper_triangle=Q_matrix)
-        print(f"--- Saved BQM components to {bqm_filename} ---") 
-        print("\n--- Solving BQM with Simulated Annealing ---")
-        sampler = SimulatedAnnealingSampler()           
-        sampleset = sampler.sample(bqm, num_reads=NUM_READS)  
-        print("--- Solving Complete ---")
-        
-        sample_configs = sampleset.record['sample']
-        configs, foms, fom_cache = add_data_parallel(configs, foms, sample_configs, ADDING_NUM, fom_cache, GRID_ROWS, GRID_COLS)
-
-        current_best_fom = np.min(foms)
-        if current_best_fom < best_fom_so_far:
-            best_fom_so_far = current_best_fom
-            best_config_so_far = configs[np.argmin(foms)]
-            print(f"\n*** New best FoM found: {-best_fom_so_far:.4f} in iteration {i+1} ***")
-        else:
-            print(f"Best FoM remains: {-best_fom_so_far:.4f}")
-
-        # <<< SUGGESTION: Periodically save the dataset to prevent data loss on crash
-        if (i + 1) % 10 == 0:
-            dataset_backup_path = os.path.join(output_folder, f"dataset_iter_{i+1}.npz")
-            np.savez(dataset_backup_path, configs=configs, foms=foms)
-            print(f"\n--- Dataset backup saved to {dataset_backup_path} ---")
-
-
-    # --- Finalize, Analyze, and Visualize ---
-    print(f"\n{'='*20} Optimization Finished {'='*20}")
-    end_total_time = time.time()
-    total_duration_seconds = end_total_time - start_total_time
-    print(f"Total execution time: {total_duration_seconds / 60:.2f} minutes ({total_duration_seconds:.2f} seconds)")
-    print(f"Final best FoM found (during optimization): {-best_fom_so_far:.4f}")
-    
-    optimized_grid = best_config_so_far.reshape((GRID_ROWS, GRID_COLS))
-    print(f"\nOptimized Structure Grid (1=Si, 0=SiO2):n{optimized_grid}")
-    
-    grid_filename = "optimized_mdm_grid_BINARY.png"
-    visualize_mdm_grid(optimized_grid, output_folder, filename=grid_filename)
-    full_structure_filename = "optimized_full_structure_SMOOTHED.png"
-    visualize_full_structure(best_config_so_far, GRID_ROWS, GRID_COLS, output_folder, filename=full_structure_filename)
-    analyze_and_visualize_final_design(best_config_so_far, GRID_ROWS, GRID_COLS, output_folder) 
-
-    # --- Tell workers to stop ---
-    for i in range(1, size):
-        comm.send(None, dest=i, tag=STOP_TAG)
-    
-    print("Inverse design process complete!")
+        if status.Get_tag() == STOP_TAG: break
+        task_idx, config = data
+        fom = evaluate_mdm_fom(config, grid_dims['rows'], grid_dims['cols'])
+        comm.send((task_idx, fom), dest=0, tag=WORK_TAG)
 
 def parallel_evaluate(tasks, fom_cache, grid_rows, grid_cols):
-    """Distributes evaluation tasks to workers."""
     num_tasks = len(tasks)
     results = [None] * num_tasks
-    
     tasks_to_run = []
     for i, config in enumerate(tasks):
-        config_tuple = tuple(config)
-        if config_tuple in fom_cache:
-            results[i] = fom_cache[config_tuple]
-            if rank == 0: print(f"  (Task {i+1}/{num_tasks}) Found in cache. FoM = {-results[i]:.4f}")
-        else:
-            tasks_to_run.append((i, config))
+        if tuple(config) in fom_cache: results[i] = fom_cache[tuple(config)]
+        else: tasks_to_run.append((i, config))
 
     if not tasks_to_run: return results
 
     num_to_run = len(tasks_to_run)
     sent_jobs = 0
     jobs_done = 0
-    
     for worker_rank in range(1, min(size, num_to_run + 1)):
-        task_index, config = tasks_to_run[sent_jobs]
-        comm.send((task_index, config), dest=worker_rank, tag=WORK_TAG)
+        comm.send(tasks_to_run[sent_jobs], dest=worker_rank, tag=WORK_TAG)
         sent_jobs += 1
 
     while jobs_done < num_to_run:
         status = MPI.Status()
-        task_index, fom = comm.recv(source=MPI.ANY_SOURCE, tag=WORK_TAG, status=status)
-        results[task_index] = fom
-        fom_cache[tuple(tasks[task_index])] = fom
+        task_idx, fom = comm.recv(source=MPI.ANY_SOURCE, tag=WORK_TAG, status=status)
+        results[task_idx] = fom
+        fom_cache[tuple(tasks[task_idx])] = fom
         jobs_done += 1
-        
-        if rank == 0: print(f"  ({jobs_done}/{num_to_run}) Received result for task {task_index + 1}. Actual FoM = {-fom:.4f}")
-
         if sent_jobs < num_to_run:
-            sender_rank = status.Get_source()
-            next_task_index, next_config = tasks_to_run[sent_jobs]
-            comm.send((next_task_index, next_config), dest=sender_rank, tag=WORK_TAG)
+            comm.send(tasks_to_run[sent_jobs], dest=status.Get_source(), tag=WORK_TAG)
             sent_jobs += 1
-            
     return results
 
-def add_data_parallel(existing_configs, existing_foms, sample_configs, adding_num, fom_cache, grid_rows, grid_cols):
-    """Parallel version of add_data."""
-    if rank == 0: print(f"\n--- Verifying top {adding_num} new candidates with MEEP (in parallel) ---")
+# -----------------------------------------------------------------------------
+# Notebook code cell 14
+# -----------------------------------------------------------------------------
+def master_node():
+    parser = argparse.ArgumentParser(description="FMQA Inverse Design")
+    parser.add_argument('--name', type=str, default='default', help='Job name for labeling outputs and D-Wave tasks')
+    args, _unknown_args = parser.parse_known_args()
+    job_name = args.name
+
+    if size < 2:
+        raise RuntimeError(
+            "MPI parallel evaluation requires at least 2 processes. "
+            "Export this notebook to a Python script and launch it with mpirun -np 4."
+        )
+
+    start_total = time.time()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"--- Master Node Started on {device} (Job Name: {job_name}) ---")
+
+    PARAMS = {
+        'GRID_ROWS': 8,
+        'GRID_COLS': 8,
+        'INIT_DATASET_SIZE': 1000, 
+        'ITERATIONS': 100,            
+        'ADDING_NUM': 30,            
+        'NUM_EPOCHS': 1000,
+        'LEARNING_RATE': 1.0e-3,
+        'NUM_READS': 2000,
+        'K_FACTOR': 10,
+        'SAMPLER_TYPE': 'QA'
+    }
+    NUM_VARS = PARAMS['GRID_ROWS'] * PARAMS['GRID_COLS']
     
-    existing_configs_set = {tuple(row) for row in existing_configs}
-    unique_new_samples = []
-    for s in sample_configs:
-        if tuple(s) not in existing_configs_set:
-            unique_new_samples.append(s)
-            existing_configs_set.add(tuple(s))
+    BASE_PATH = os.path.abspath(os.path.join(os.getcwd(), "results"))
+    BQM_BASE_DIR = os.path.join(BASE_PATH, "BQM")
+    RESULTS_BASE_DIR = os.path.join(BASE_PATH, "Results")
     
-    if not unique_new_samples:
-        if rank == 0: print("No new unique configurations found by the sampler.")
-        return existing_configs, existing_foms, fom_cache
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir_name = f"run_{job_name}_{timestamp}"
+    
+    os.makedirs(BQM_BASE_DIR, exist_ok=True)
+    os.makedirs(RESULTS_BASE_DIR, exist_ok=True)
+    BQM_RUN_DIR = os.path.join(BQM_BASE_DIR, run_dir_name)
+    os.makedirs(BQM_RUN_DIR, exist_ok=True)
+    output_folder = os.path.join(RESULTS_BASE_DIR, run_dir_name)
+    os.makedirs(output_folder, exist_ok=True)
+    
+    print(f"--- Directories initialized ---")
+    print(f"  BQM Run Path: {BQM_RUN_DIR}")
+    print(f"  Results Path: {output_folder}")
+    
+    comm.bcast({'rows': PARAMS['GRID_ROWS'], 'cols': PARAMS['GRID_COLS']}, root=0)
+    
+    # 1. Init Dataset
+    print(f"--- Generating Initial Dataset ({PARAMS['INIT_DATASET_SIZE']} samples) ---")
+    t_init_start = time.time()
+    
+    print("  Using Smooth Random Initialization to ensure structural continuity...")
+    configs = np.array([
+        generate_smooth_random_config(PARAMS['GRID_ROWS'], PARAMS['GRID_COLS']) 
+        for _ in range(PARAMS['INIT_DATASET_SIZE'])
+    ])
+    
+    fom_cache = {}
+    foms = np.array(parallel_evaluate(configs, fom_cache, PARAMS['GRID_ROWS'], PARAMS['GRID_COLS']))
+    for i, c in enumerate(configs): fom_cache[tuple(c)] = foms[i]
+    print(f"--- Initial Dataset Done ({time.time() - t_init_start:.2f}s) ---")
+    
+    best_fom = np.min(foms)
+    best_config = configs[np.argmin(foms)]
+    
+    history = {
+        'timing_metrics': {
+            'fm_train_time': [],
+            'q_matrix_build_time': [],
+            'qa_sample_time': [],
+            'new_data_sim_time': []
+        },
+        'convergence': {
+            'iteration_min_fom': [],
+            'new_batch_min_fom': []
+        },
+        'chain_break_trends': {
+            'avg': [],
+            'max': []
+        },
+        'bqm_structures': [],
+        'best_fom_trajectory': [],
+        'loss_histories': []
+    }
+    
+    history['best_fom_trajectory'].append(-best_fom)
 
-    new_configs_to_verify = np.array(unique_new_samples[:adding_num])
-    new_foms = parallel_evaluate(new_configs_to_verify, fom_cache, grid_rows, grid_cols)
+    # 2. Optimization Loop
+    for i in range(PARAMS['ITERATIONS']):
+        print(f"\n=== Iteration {i+1}/{PARAMS['ITERATIONS']} ===")
+        
+        # --- A. FM Training ---
+        model = FactorizationMachine(input_size=NUM_VARS, factorization_size=PARAMS['K_FACTOR']).to(device)
+        model, losses, t_train, (y_mean, y_std) = train_fm_model(
+            model, configs, foms, PARAMS['NUM_EPOCHS'], PARAMS['LEARNING_RATE'], batch_size=32
+        )
+        
+        history['timing_metrics']['fm_train_time'].append(t_train)
+        history['loss_histories'].append(losses)
+        print(f"  [Time] FM Train: {t_train:.4f}s")
+        
+        # --- B. Construct Q-Matrix ---
+        t_q_start = time.time()
+        bias, h, Q = model.get_bhQ() 
+        
+        bqm_filename = f"bqm_iter_{i+1}.json"
+        bqm_filepath = os.path.join(BQM_RUN_DIR, bqm_filename)
+        
+        bqm_data = {
+            'h': h.tolist(), 
+            'Q': Q.tolist(), 
+            'bias': float(bias),
+            'iteration': i+1,
+            'timestamp': timestamp,
+            'job_name': job_name
+        }
+        with open(bqm_filepath, 'w') as f:
+            json.dump(bqm_data, f)
+            
+        history['bqm_structures'].append(bqm_filename)
+        
+        Q_dict = {(r, c): Q[r, c] for r in range(Q.shape[0]) for c in range(r+1, Q.shape[1]) if Q[r, c] != 0}
+        bqm = dimod.BinaryQuadraticModel(h, Q_dict, bias, dimod.BINARY)
+        t_q_end = time.time()
+        
+        history['timing_metrics']['q_matrix_build_time'].append(t_q_end - t_q_start)
+        print(f"  [Time] Q-Matrix Build: {t_q_end - t_q_start:.4f}s")
+        
+        # --- C. Sampling (QA/SA) ---
+        t_sample_start = time.time()
+        sampler_type = PARAMS['SAMPLER_TYPE']
+        sampleset = None
+        
+        current_avg_break = 0.0
+        current_max_break = 0.0
 
-    if new_configs_to_verify.size > 0:
-        all_configs = np.vstack([existing_configs, new_configs_to_verify])
-        all_foms = np.concatenate([existing_foms, np.array(new_foms)])
-    else:
-        all_configs = existing_configs
-        all_foms = existing_foms
+        def run_qa_sampling(bqm, retries=3):
+            for attempt in range(retries):
+                try:
+                    sampler = EmbeddingComposite(DWaveSampler(solver={'qpu': True})) 
+                    qa_label = f"{job_name}_iter_{i+1}"
+                    print(f"  [Attempt {attempt+1}/{retries}] Connecting to D-Wave... (Label: {qa_label})")
+                    return sampler.sample(bqm, num_reads=PARAMS['NUM_READS'], annealing_time=20.0, label=qa_label)
+                except Exception as e:
+                    print(f"  [Warning] QA Attempt {attempt+1} failed: {e}")
+                    if attempt < retries - 1:
+                        print("  Waiting 10 seconds before retrying...")
+                        time.sleep(10)
+            return None
 
-    return all_configs, all_foms, fom_cache
+        if sampler_type == "QA":
+            if DWAVE_AVAILABLE:
+                sampleset = run_qa_sampling(bqm)
+                if sampleset is None:
+                    print("  [Error] All QA attempts failed. Falling back to SA.")
+                    sampler = SimulatedAnnealingSampler()
+                    sampleset = sampler.sample(bqm, num_reads=PARAMS['NUM_READS'])
+                else:
+                    if 'chain_break_fraction' in sampleset.record.dtype.names:
+                        breaks = sampleset.record['chain_break_fraction']
+                        current_avg_break = float(np.mean(breaks))
+                        current_max_break = float(np.max(breaks))
+                        print(f"  [QA Health] Chain Breaks - Avg: {current_avg_break:.4f}, Max: {current_max_break:.4f}")
+                        if current_avg_break > 0.1:
+                            print("  [Warning] High chain break fraction detected (>10%)")
+            else:
+                print("  [Warning] D-Wave SDK not installed. Falling back to SA.")
+                sampler = SimulatedAnnealingSampler()
+                sampleset = sampler.sample(bqm, num_reads=PARAMS['NUM_READS'])
+                
+        elif sampler_type == "SA":
+            sampler = SimulatedAnnealingSampler()
+            sampleset = sampler.sample(bqm, num_reads=PARAMS['NUM_READS'])
+        
+        history['chain_break_trends']['avg'].append(current_avg_break)
+        history['chain_break_trends']['max'].append(current_max_break)
+        
+        sampleset = sampleset.aggregate()
+        sorted_indices = np.argsort(sampleset.record['energy'])
+        sample_configs = sampleset.record['sample'][sorted_indices]
+        t_sample_end = time.time()
+        
+        history['timing_metrics']['qa_sample_time'].append(t_sample_end - t_sample_start)
+        print(f"  [Time] Sampling Done: {t_sample_end - t_sample_start:.4f}s")
+        
+        # --- D. New Data Simulation ---
+        t_sim_start = time.time()
+        unique_new = [s for s in sample_configs if tuple(s) not in {tuple(x) for x in configs}]
+        new_configs = np.array(unique_new[:PARAMS['ADDING_NUM']])
+        
+        new_fom_min = None
+        if new_configs.size > 0:
+            new_foms = parallel_evaluate(new_configs, fom_cache, PARAMS['GRID_ROWS'], PARAMS['GRID_COLS'])
+            configs = np.vstack([configs, new_configs])
+            foms = np.concatenate([foms, new_foms])
+            new_fom_min = np.min(new_foms)
+        
+        t_sim_end = time.time()
+        history['timing_metrics']['new_data_sim_time'].append(t_sim_end - t_sim_start)
+        print(f"  [Time] New Data Sim ({len(new_configs)}): {t_sim_end - t_sim_start:.4f}s")
 
-if __name__ == "__main__":
-    if size == 1:
-        if rank == 0:
-            print("WARNING: Running MPI script on a single process. No parallelism will occur.")
-            master_node()
-    else:
-        if rank == 0:
-            master_node()
+        # --- E. Record Convergence ---
+        current_best = np.min(foms)
+        if current_best < best_fom:
+            best_fom = current_best
+            best_config = configs[np.argmin(foms)]
+            print(f"*** New Global Best FoM: {-best_fom:.4f} ***")
+        
+        history['best_fom_trajectory'].append(-best_fom)
+        history['convergence']['iteration_min_fom'].append(float(-current_best))
+        if new_fom_min is not None:
+            history['convergence']['new_batch_min_fom'].append(float(-new_fom_min))
         else:
-            worker_node()
+            history['convergence']['new_batch_min_fom'].append(None)
+
+        np.savez(os.path.join(output_folder, "experiment_data.npz"), 
+                 configs=configs, foms=foms, best_config=best_config, params=PARAMS, history=history)
+
+    # 3. Finalize
+    for i in range(1, size): comm.send(None, dest=i, tag=STOP_TAG)
+    
+    print("\n=== Optimization Done. Starting Post-Process =====")
+    
+    plot_optimization_trajectory(foms, PARAMS['INIT_DATASET_SIZE'], output_folder)
+    plot_chain_break_history(history, output_folder)
+    
+    final_metrics = perform_detailed_final_analysis(best_config, PARAMS['GRID_ROWS'], PARAMS['GRID_COLS'], output_folder)
+    generate_gds(best_config, PARAMS['GRID_ROWS'], PARAMS['GRID_COLS'], output_folder)
+    
+    json_data = {
+        "job_name": job_name,
+        "parameters": PARAMS,
+        "final_performance": {
+            "best_fom": float(-best_fom),
+            "best_config": best_config.tolist(),
+            "transmission_details": final_metrics
+        },
+        "chain_break_summary": {
+            "final_avg": history['chain_break_trends']['avg'][-1] if history['chain_break_trends']['avg'] else 0,
+            "max_observed": max(history['chain_break_trends']['max']) if history['chain_break_trends']['max'] else 0
+        },
+        "timing_summary": {
+            "total_time": time.time() - start_total,
+            "avg_fm_train": np.mean(history['timing_metrics']['fm_train_time']),
+            "avg_sim_time": np.mean(history['timing_metrics']['new_data_sim_time'])
+        },
+        "history_keys": list(history.keys()), 
+        "paths": {
+            "bqm_folder": BQM_RUN_DIR,
+            "results_folder": output_folder
+        }
+    }
+    
+    with open(os.path.join(output_folder, "experiment_report.json"), 'w') as f:
+        json.dump(json_data, f, indent=4)
+        
+    print(f"All results saved to: {output_folder}")
+
+# The complete optimization is launched by an MPI-enabled Python process group.
+# In a standard single-process Jupyter kernel, this guard prevents an accidental run.
+if __name__ == "__main__" and size > 1:
+    if rank == 0:
+        master_node()
+    else:
+        worker_node()
+
