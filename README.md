@@ -1,0 +1,327 @@
+<div align="center">
+
+<h1>基於 FMQA 的 8 × 8 矽光子模態分波器反向設計<br>Inverse Design of a Silicon Photonic Mode-Division Demultiplexer</h1>
+
+<p>
+  <strong>
+    以二元材料編碼描述多模態波導之設計區域，<br>
+    結合 Meep FDTD、Factorization Machine 與 QUBO Annealing，探索 TE 模態分波結構。
+  </strong>
+</p>
+
+<p>
+  <a href="#概述">概述</a> ·
+  <a href="#研究目標">研究目標</a> ·
+  <a href="#方法">方法</a> ·
+  <a href="#模擬設定">模擬設定</a> ·
+  <a href="#程式架構">程式架構</a> ·
+  <a href="#執行方式">執行方式</a> ·
+  <a href="#限制與注意事項">限制</a> ·
+  <a href="#參考資料">參考資料</a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/FDTD-Meep-blue" alt="Meep FDTD">
+  <img src="https://img.shields.io/badge/Optimization-FM--QUBO--QA%2FSA-purple" alt="FM QUBO QA SA">
+  <img src="https://img.shields.io/badge/Design-8%C3%978%20Binary%20Grid-orange" alt="8x8 binary grid">
+  <img src="https://img.shields.io/badge/Parallel-MPI-green" alt="MPI">
+  <img src="https://img.shields.io/badge/Language-Python-yellow" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="MIT License">
+</p>
+
+</div>
+
+## 概述
+
+模態分波器（Mode-Division Demultiplexer, MDM Demux）可將多模態波導中的不同空間模態導引至不同輸出通道，是矽光子積體電路中進行模態多工與訊號路由的重要元件。設計區域內的材料分佈會影響模態轉換、輸出傳輸及非目標通道的串擾，因此可將元件設計表述為一個以電磁模擬評估的離散結構最佳化問題。
+
+本 Repository 建立一個以 **8 × 8 二元設計網格**表示中央材料區域的反向設計流程。候選結構經 Gaussian smoothing 與 Tanh projection 形成平滑材料分佈，再由 Meep 執行二維有限差分時域法（Finite-Difference Time-Domain, FDTD）模擬。輸入端激發 TE₀ 或 TE₁ 模態，並透過輸出端模態分解取得各通道的傳輸係數。
+
+在最佳化階段，使用二階因子分解機（Factorization Machine, FM）學習設計變數與 Figure of Merit（FoM）之間的關係，將 FM 參數轉換為二次無約束二元最佳化（Quadratic Unconstrained Binary Optimization, QUBO）模型，再以量子退火（Quantum Annealing, QA）或模擬退火（Simulated Annealing, SA）搜尋候選解。新候選結構會重新交由 Meep 評估，並加入資料集進行下一輪代理模型訓練。
+
+<p align="center">
+  <img src="assets/DEMUX_schematic.png" width="85%" alt="Mode-division demultiplexer schematic">
+  <br><em>圖 1. Repository 所提供之模態分波器示意圖。</em>
+</p>
+
+> **模型範圍：** 目前程式採用二維 Meep 模型，材料沿模擬平面外方向以 <code>mp.inf</code> 延伸。此模型未完整描述有限厚度 SOI 波導的垂直侷限，模擬結果不應直接解讀為三維元件或實際製程量測結果。
+
+## 研究目標
+
+本專案以兩個輸入模態及兩個輸出通道建立模態路由目標：
+
+- **TE₀ 輸入：** 目標傳輸至輸出端口 1（\(y=+1.5\,\mu m\)）。
+- **TE₁ 輸入：** 目標傳輸至輸出端口 2（\(y=-1.5\,\mu m\)）。
+- **非目標通道：** 降低 TE₀ 至端口 2，以及 TE₁ 至端口 1 的傳輸，以抑制模態串擾。
+
+現有素材亦包含以不同輸入模態進行模擬的場型圖：
+
+<p align="center">
+  <img src="assets/design2_TE0.png" width="48%" alt="TE0 input field result">
+  <img src="assets/design2_TE1.png" width="48%" alt="TE1 input field result">
+  <br><em>圖 2. Repository 中提供的 TE₀ 與 TE₁ 輸入場型示例。</em>
+</p>
+
+本 Repository 尚未提供可追溯至固定程式版本、隨機種子及統一評估預算的完整數值結果表，因此 README 不列出未經確認的最佳傳輸率或 FoM。
+
+## 方法
+
+### 1. 整體反向設計流程
+
+各候選結構皆由 Meep FDTD 進行物理評估。FM 代理模型負責近似設計變數與 FoM 的關係，QUBO sampler 則提供下一輪候選二元組態。
+
+```mermaid
+flowchart TD
+    A["產生初始 8 × 8 二元結構"] --> B["端口限制與幾何投影"]
+    B --> C["Meep FDTD 模態模擬"]
+    C --> D["計算模態傳輸率與 FoM"]
+    D --> E["建立模擬資料集"]
+    E --> F["訓練 Factorization Machine"]
+    F --> G["轉換為 QUBO / BQM"]
+    G --> H["QA 或 SA 搜尋候選結構"]
+    H --> I["選取未評估候選解"]
+    I --> B
+    D --> J["最佳結構與場型後處理"]
+```
+
+### 2. 二元結構編碼與幾何投影
+
+設計變數為 \(8\times8\) 二元矩陣，展平成 64 維向量：
+
+\[
+\mathbf{x}\in\{0,1\}^{64}.
+\]
+
+程式以 0、1 表示二氧化矽與矽的材料權重。首先套用輸入與輸出端口限制，固定設計區域邊界的端口幾何，並保留指定 padding；接著使用 Gaussian kernel 平滑二元分佈：
+
+\[
+\rho=G_\sigma * X,
+\qquad
+G_\sigma(i,j)\propto
+\exp\left[-\frac{i^2+j^2}{2\sigma^2}\right].
+\]
+
+平滑後的密度透過 Tanh projection 轉換：
+
+\[
+\tilde{\rho}=
+\frac{
+\tanh(\beta\eta)+\tanh[\beta(\rho-\eta)]
+}{
+\tanh(\beta\eta)+\tanh[\beta(1-\eta)]
+}.
+\]
+
+Notebook 預設採用 \(5\times5\) Gaussian kernel、\(\sigma=0.5\)、\(\beta=50\)、\(\eta=0.5\)，並將投影密度映射至 Meep <code>MaterialGrid</code>。此參數化方式保留二元搜尋變數，同時透過平滑與投影控制材料邊界。
+
+### 3. FDTD 模擬與模態傳輸
+
+模擬以 Meep <code>EigenModeSource</code> 激發輸入波導中的 TE 模態：
+
+| 模態 | 輸入本徵模態設定 | 目標輸出端口 |
+|---|---|---|
+| TE₀ | band 1、偶對稱（<code>mp.EVEN_Y</code>） | Port 1，\(y=+1.5\,\mu m\) |
+| TE₁ | band 2、奇對稱（<code>mp.ODD_Y</code>） | Port 2，\(y=-1.5\,\mu m\) |
+
+令 \(T_{ij}\) 表示輸入模態 \(i\) 傳輸至輸出端口 \(j\) 的功率比：
+
+\[
+T_{ij}=
+\frac{|\alpha_{i\rightarrow j}^{\mathrm{out}}|^2}
+{|\alpha_i^{\mathrm{in}}|^2+\epsilon},
+\]
+
+其中 \(\alpha\) 為 Meep 模態分解所得的複數模態係數，\(\epsilon\) 為數值穩定項。目標通道為 \(T_{01}\) 與 \(T_{12}\)，非目標通道為 \(T_{02}\) 與 \(T_{11}\)。
+
+### 4. FoM 定義
+
+**Notebook 版本**採用乘積型目標函數：
+
+\[
+S_{\mathrm{TE0}}=T_{01}(1-T_{02}),
+\qquad
+S_{\mathrm{TE1}}=T_{12}(1-T_{11}),
+\]
+
+\[
+\mathrm{FoM}_{\mathrm{NB}}=
+S_{\mathrm{TE0}}S_{\mathrm{TE1}}.
+\]
+
+目標為最大化 FoM；程式回傳 \(-\mathrm{FoM}\)，以符合 QUBO sampler 的能量最小化形式。
+
+**獨立 Python 腳本 <code>demux_8x8.py</code>** 使用另一種加權對數 FoM：
+
+\[
+\mathrm{FoM}_{\mathrm{PY}}=
+\log_{10}(T_{01}+\epsilon)+\log_{10}(T_{12}+\epsilon)
+-w\left[
+\log_{10}(T_{02}+\epsilon)+\log_{10}(T_{11}+\epsilon)
+\right],
+\]
+
+其中程式設定 \(w=0.2\)，並同樣以負 FoM 作為最小化目標。
+
+> **比較注意：** 兩個入口目前採用不同 FoM 定義，因此其最佳 FoM 數值不可直接互相比較。若要進行嚴格方法比較，應先統一目標函數、初始資料分佈、FM 因子維度、取樣器與模擬預算。
+
+### 5. Factorization Machine 與 QUBO
+
+FM 使用線性項與低秩二階交互作用近似 FoM：
+
+\[
+\hat{y}(\mathbf{x})=
+w_0+\sum_i w_i x_i+
+\frac{1}{2}\sum_{f=1}^{k}
+\left[
+\left(\sum_i v_{f,i}x_i\right)^2
+-\sum_i v_{f,i}^{\,2}x_i^2
+\right].
+\]
+
+其中 \(w_0\) 為偏置項、\(w_i\) 為線性係數、\(v_{f,i}\) 為潛在因子，\(k\) 為因子維度。訓練後將 FM 係數轉換為 QUBO：
+
+\[
+E(\mathbf{x})=c+\sum_i h_i x_i+\sum_{i<j}Q_{ij}x_ix_j,
+\qquad x_i\in\{0,1\}.
+\]
+
+QUBO sampler 產生低能量候選組態後，仍須以 Meep FDTD 重新計算 FoM。此流程將 FM 作為代理模型，而非以代理模型預測值取代最終電磁模擬。
+
+### 6. MPI 平行化
+
+程式使用 MPI Master–Worker 架構。Master（rank 0）負責建立資料集、訓練 FM、建構 BQM 及更新最佳解；Worker ranks 負責接收設計向量、執行 Meep 模擬並回傳 FoM。初始樣本與每輪新增候選解的評估工作可因此分配至多個 processes。
+
+## 模擬設定
+
+以下參數根據目前 Notebook 與 Python 腳本整理。兩個實作版本的差異另列於後表。
+
+### 電磁模型參數
+
+| 參數 | Notebook 設定 | 說明 |
+|---|---:|---|
+| 模擬維度 | 2D | 二維 FDTD |
+| 設計區域 | \(6.5\times6.5\,\mu m^2\) | 中央材料設計區 |
+| 模擬區域 | \(9.5\times8.5\,\mu m^2\) | \(S_x\times S_y\) |
+| 輸入波導寬度 | 1.8 µm | 多模態輸入端 |
+| 輸出波導寬度 | 0.5 µm | 兩個單模態輸出端 |
+| 波導延伸長度 | 0.5 µm | 設計區外固定波導 |
+| PML 厚度 | 1.0 µm | 吸收邊界 |
+| 矽折射率 | 3.48 | 常數近似 |
+| 二氧化矽折射率 | 1.44 | 常數近似 |
+| 中心波長 | 1.55 µm | Gaussian source 中心 |
+| 空間解析度 | 40 pixels/µm | FDTD 網格 |
+| 頻率取樣點數 | 100 | Notebook；FoM 取最接近中心頻率之點 |
+
+### 最佳化參數與程式版本差異
+
+| 設定 | <code>demux_tutorial.ipynb</code> | <code>demux_8x8.py</code> |
+|---|---:|---:|
+| 設計變數 | 64（8 × 8） | 64（8 × 8） |
+| 初始資料數 | 1,000 | 1,000 |
+| 初始結構 | 平滑隨機二元網格 | Bernoulli 隨機初始化，Si 機率 0.9 |
+| 迭代次數 | 100 | 100 |
+| 每輪新增資料上限 | 30 | 30 |
+| FM epochs | 1,000 | 1,000 |
+| FM factorization size | 10 | 64 |
+| Learning rate | \(10^{-3}\) | \(10^{-3}\) |
+| Sampler | QA，失敗時回退 SA | SA |
+| <code>num_reads</code> | 2,000 | 500 |
+| FoM | 乘積型 | 加權對數型 |
+| <code>NFREQ</code> | 100 | 1 |
+
+兩個程式入口皆使用 8 × 8 二元設計網格與 Meep 評估，但資料初始化、目標函數與最佳化參數不完全相同。本文將其視為同一設計問題的兩種程式實作，不將其執行結果直接視為控制變因一致的比較實驗。
+
+## 程式架構
+
+```text
+Demux_Tutorial/
+├── README.md
+├── LICENSE
+├── assets/
+│   ├── DEMUX_schematic.png
+│   ├── design2_TE0.png
+│   └── design2_TE1.png
+├── demux_8x8.py
+├── demux_tutorial.ipynb
+└── factorization_machine.py
+```
+
+| 檔案 | 功能 |
+|---|---|
+| <code>demux_tutorial.ipynb</code> | FMQA 模態分波器反向設計教學；包含 QA 路徑與 SA fallback |
+| <code>demux_8x8.py</code> | 獨立 Python 最佳化實作，預設使用 SA |
+| <code>factorization_machine.py</code> | 二階 Factorization Machine 與 FM 係數至二次項的轉換 |
+| <code>assets/</code> | 模擬幾何示意與 TE 模態場型圖片 |
+| <code>LICENSE</code> | MIT License |
+
+## 執行方式
+
+### 環境需求
+
+程式主要依賴下列套件：
+
+| 套件 | 用途 |
+|---|---|
+| Meep / pymeep | FDTD 電磁模擬 |
+| NumPy、SciPy | 數值運算與影像濾波 |
+| Matplotlib | 結構與場型視覺化 |
+| PyTorch | FM 訓練 |
+| mpi4py、MPI | 多程序平行評估 |
+| dimod | QUBO / BQM 建構 |
+| dwave-samplers | 模擬退火 |
+| dwave-system | 選用；D-Wave QPU 介面 |
+
+本 Repository 未提供固定版本的 <code>requirements.txt</code> 或 Conda environment 檔案。建議先依照官方文件安裝與系統 MPI 相容的 Meep，再安裝其餘 Python 依賴。Meep 安裝說明請參考 [Meep Installation Guide](https://meep.readthedocs.io/en/latest/Installation/)。
+
+### 1. 執行獨立 Python 版本（SA）
+
+在 Repository 根目錄執行：
+
+```bash
+mpirun -np 4 python demux_8x8.py
+```
+
+### 2. 執行 Notebook 版本（QA／SA fallback）
+
+Notebook 內含 MPI Master–Worker 工作流程。若要執行完整最佳化，可先匯出為 Python 腳本：
+
+```bash
+jupyter nbconvert --to script demux_tutorial.ipynb
+mpirun -np 4 python demux_tutorial.py --name demux_8x8
+```
+
+上述範例啟動 4 個 MPI processes（1 個 Master、3 個 Workers）。完整平行評估至少需要 2 個 processes。實際數量應依伺服器 CPU、記憶體、MPI runtime 與 Meep 建置方式調整。
+
+### 輸出內容
+
+Notebook 版本會在目前工作目錄建立 <code>results/</code>，並將 BQM 與模擬結果分別存放於時間戳記資料夾。主要輸出包括：
+
+- <code>experiment_data.npz</code>：設計樣本、FoM、最佳組態與歷程資料。
+- <code>experiment_report.json</code>：最佳 FoM、參數、效能與輸出路徑摘要。
+- BQM JSON 檔案：各迭代所建立的線性與二次係數。
+- 最佳二元結構、材料分佈及電場強度圖。
+
+<code>demux_8x8.py</code> 會建立以 <code>results_8x8_res...</code> 命名的結果資料夾，保存 BQM、資料備份與後處理圖片。實際輸出以各程式版本的執行訊息為準。
+
+## 限制與注意事項
+
+1. **二維模型限制：** 材料沿平面外方向以無限延伸描述，並未完整模擬有限厚度 SOI 波導的垂直方向侷限。
+2. **材料近似：** 矽與二氧化矽使用常數折射率，未考慮色散、吸收、側壁角度及製程誤差。
+3. **頻寬限制：** Notebook 的 FoM 以最接近中心頻率的監測點計算，不能據此推論整個頻帶內的分波性能。
+4. **目標函數差異：** Notebook 與 <code>demux_8x8.py</code> 的 FoM 定義不同，數值不可直接比較。
+5. **隨機最佳化：** 初始樣本及 QA／SA 取樣具有隨機性；最佳候選解僅代表該次執行已評估樣本中的 best-found solution，不保證為全域最佳解。
+6. **D-Wave 使用條件：** QA 路徑需要安裝 D-Wave Ocean SDK、有效憑證及可用 QPU；Notebook 在相關功能不可用時會回退至 SA。
+7. **未完成的後處理介面：** Notebook 中的 <code>plot_chain_break_history()</code> 與 <code>generate_gds()</code> 目前為未實作函式，現階段不會產生 chain-break 歷程圖或 GDS 檔案。
+8. **製程驗證：** 本 Repository 提供數值模擬與反向設計程式，尚不能替代三維模擬、製程可行性分析及實際元件量測。
+
+## 參考資料
+
+1. S. Rendle, “Factorization Machines,” *2010 IEEE International Conference on Data Mining*, pp. 995–1000, 2010. [https://doi.org/10.1109/ICDM.2010.127](https://doi.org/10.1109/ICDM.2010.127)
+2. A. F. Oskooi, D. Roundy, M. Ibanescu, P. Bermel, J. D. Joannopoulos, and S. G. Johnson, “Meep: A flexible free-software package for electromagnetic simulations by the FDTD method,” *Computer Physics Communications*, vol. 181, no. 3, pp. 687–702, 2010. [https://doi.org/10.1016/j.cpc.2009.11.008](https://doi.org/10.1016/j.cpc.2009.11.008)
+3. [Meep Documentation](https://meep.readthedocs.io/en/latest/)
+4. [D-Wave Ocean Documentation](https://docs.dwavequantum.com/en/latest/ocean/)
+5. [PyTorch Documentation](https://pytorch.org/docs/stable/index.html)
+
+## 授權
+
+本 Repository 採用 [MIT License](LICENSE)。
